@@ -16,3 +16,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Deploy build artifacts
+deploy/bundle/
+deploy/wandering-rag-mcp-offline.tar.gz

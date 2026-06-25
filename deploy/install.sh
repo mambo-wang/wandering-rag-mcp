@@ -42,9 +42,20 @@ fi
 
 source "$ENV_DIR/bin/activate"
 
-# 从本地 wheels 目录安装所有包（纯离线）
-pip install --no-index --find-links "$BUNDLE_DIR/wheels" \
-    mcp zvec sentence-transformers "markitdown[all]" python-multipart 2>&1 | tail -10
+# 检查是否有预下载的 wheels
+WHEEL_COUNT=$(find "$BUNDLE_DIR/wheels" -name "*.whl" -o -name "*.tar.gz" 2>/dev/null | wc -l)
+
+if [ "$WHEEL_COUNT" -gt 0 ]; then
+    # 离线模式：从本地 wheels 目录安装
+    echo "  检测到 $WHEEL_COUNT 个本地包，执行离线安装 ..."
+    pip install --no-index --find-links "$BUNDLE_DIR/wheels" \
+        mcp zvec sentence-transformers "markitdown[all]" python-multipart 2>&1 | tail -10
+else
+    # 在线模式：从 requirements.txt 安装（Windows 打包的情况）
+    echo "  本地 wheels 为空，从 PyPI 在线安装依赖 ..."
+    pip install --upgrade pip -q
+    pip install -r "$BUNDLE_DIR/requirements.txt" 2>&1 | tail -10
+fi
 
 echo "  -> 依赖安装完成"
 
