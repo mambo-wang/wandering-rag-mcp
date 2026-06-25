@@ -110,6 +110,7 @@ Search the knowledge base with natural language queries.
 | `collection` | string | `"default"` | Collection to search |
 | `rerank` | bool | `false` | Use cross-encoder reranker for higher accuracy |
 | `filter` | string | `""` | Glob pattern to filter by source file (e.g. `*.md`, `**/docs/*`) |
+| `expand_context` | int | 0 | Number of neighboring chunks to include before/after each result for broader context |
 
 ### `ingest_file`
 
@@ -248,7 +249,7 @@ Semantic search across the knowledge base.
 ```bash
 curl -X POST http://localhost:8000/api/collections/default/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "how to install", "top_k": 5, "rerank": false, "filter": "*.md"}'
+  -d '{"query": "how to install", "top_k": 5, "rerank": false, "filter": "*.md", "expand_context": 1}'
 ```
 
 **Request body:**
@@ -258,6 +259,7 @@ curl -X POST http://localhost:8000/api/collections/default/search \
 | `top_k` | int | 5 | Number of results |
 | `rerank` | bool | `false` | Use cross-encoder reranker |
 | `filter` | string | `""` | Glob pattern to filter by source file path |
+| `expand_context` | int | 0 | Number of neighboring chunks to include before/after each result |
 
 **Response:**
 ```json
@@ -394,6 +396,19 @@ cd bundle && bash install.sh
 ```
 
 See [deploy/README.md](deploy/README.md) for full deployment guide.
+
+## Roadmap
+
+The following improvements are planned for future releases:
+
+- **Hybrid search**: Combine BM25 keyword retrieval with semantic search using Reciprocal Rank Fusion (RRF) for better precision on exact-match queries (function names, error codes, technical terms)
+- **SQLite metadata layer**: Replace `_registry.json` with SQLite for document metadata, enabling server-side metadata filtering (WHERE clauses) and reliable batch deletion instead of the current ID-probing approach
+- **Structured chunking**: A new chunking mode that respects document structure — Markdown headings, code block fences, table boundaries — before applying recursive or semantic splitting within each section
+- **Evaluation framework**: Built-in recall@k and MRR benchmarks with a CLI evaluation script, enabling quantitative measurement of retrieval quality when tuning chunking strategies or swapping models
+- **Token-based chunk sizing**: Replace character-based `chunk_size` with token-based sizing for consistent chunk lengths across different languages (CJK vs. Latin scripts)
+- **Embedding batch control**: Configurable batch size for `encode()` to prevent memory spikes when ingesting large documents with hundreds of chunks
+- **Collection deletion**: Support deleting an entire collection and all its documents in one operation
+- **Concurrent access safety**: File-level locking for `_registry.json` and thread-safe VectorStore operations to prevent corruption under concurrent REST API requests
 
 ## License
 

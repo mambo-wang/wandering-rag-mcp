@@ -191,6 +191,52 @@ class VectorStore:
             for r in results
         ]
 
+    def fetch_neighbors(
+        self,
+        source: str,
+        chunk_index: int,
+        doc_id: str,
+        n_before: int = 1,
+        n_after: int = 1,
+        collection: str = "default",
+    ) -> list[dict]:
+        """Fetch neighboring chunks around a given chunk for context expansion.
+
+        Args:
+            source: Source file path of the chunk.
+            chunk_index: Index of the target chunk.
+            doc_id: Document ID prefix (from compute_doc_id).
+            n_before: Number of chunks before to fetch.
+            n_after: Number of chunks after to fetch.
+            collection: Collection name.
+
+        Returns:
+            List of neighbor chunk dicts (may include the original chunk).
+        """
+        coll = self._get_or_create_collection(collection)
+        ids = []
+        for i in range(max(0, chunk_index - n_before), chunk_index + n_after + 1):
+            ids.append(f"{doc_id}_{i}")
+
+        try:
+            fetched = coll.fetch(ids)
+        except Exception as e:
+            logger.warning(f"Failed to fetch neighbors: {e}")
+            return []
+
+        neighbors = []
+        for chunk_id in ids:
+            if chunk_id in fetched and fetched[chunk_id] is not None:
+                doc = fetched[chunk_id]
+                fields = doc.fields
+                neighbors.append({
+                    "id": chunk_id,
+                    "text": fields.get("text", "") if hasattr(fields, 'get') else "",
+                    "source": fields.get("source", "") if hasattr(fields, 'get') else "",
+                    "chunk_index": fields.get("chunk_index", 0) if hasattr(fields, 'get') else 0,
+                })
+        return neighbors
+
     def delete_document(
         self,
         filepath: str,

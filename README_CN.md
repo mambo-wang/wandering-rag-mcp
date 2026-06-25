@@ -110,6 +110,7 @@ python server.py --mode sse --no-api
 | `collection` | string | `"default"` | 搜索的知识库 |
 | `rerank` | bool | `false` | 启用交叉编码器 Reranker 提升精度 |
 | `filter` | string | `""` | Glob 模式按源文件过滤（如 `*.md`、`**/docs/*`） |
+| `expand_context` | int | 0 | 每条结果前后扩展的相邻 chunk 数量，提供更完整的上下文 |
 
 ### `ingest_file` — 导入文件
 
@@ -248,7 +249,7 @@ curl -X DELETE http://localhost:8000/api/collections/default/documents \
 ```bash
 curl -X POST http://localhost:8000/api/collections/default/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "如何安装", "top_k": 5, "rerank": false, "filter": "*.md"}'
+  -d '{"query": "如何安装", "top_k": 5, "rerank": false, "filter": "*.md", "expand_context": 1}'
 ```
 
 **请求体：**
@@ -258,6 +259,7 @@ curl -X POST http://localhost:8000/api/collections/default/search \
 | `top_k` | int | 5 | 返回结果数量 |
 | `rerank` | bool | `false` | 启用交叉编码器 Reranker |
 | `filter` | string | `""` | Glob 模式按源文件路径过滤 |
+| `expand_context` | int | 0 | 每条结果前后扩展的相邻 chunk 数量，提供更完整的上下文 |
 
 **响应：**
 ```json
@@ -394,6 +396,19 @@ cd bundle && bash install.sh
 ```
 
 完整部署指南请参阅 [deploy/README.md](deploy/README.md)。
+
+## Roadmap
+
+以下改进计划将在后续版本中实现：
+
+- **混合搜索**：将 BM25 关键词检索与语义搜索结合，使用倒数排名融合（RRF），提升精确匹配场景（函数名、错误码、技术术语）的召回率
+- **SQLite 元数据层**：用 SQLite 替代 `_registry.json` 存储文档元数据，支持服务端元数据过滤（WHERE 子句）和可靠的批量删除，取代当前的 ID 逐个探测方式
+- **结构化分块**：新增分块模式，先按文档结构（Markdown 标题、代码块围栏、表格边界）切分，再在每段内做递归或语义分块
+- **评测框架**：内置 recall@k 和 MRR 评测，提供 CLI 评测脚本，在调整分块策略或更换模型时量化检索质量
+- **Token 级分块尺寸**：将基于字符的 `chunk_size` 改为基于 token 的尺寸控制，确保不同语言（中日韩 vs. 拉丁字母）下 chunk 长度一致
+- **嵌入批处理控制**：`encode()` 支持可配置的批处理大小，防止大文档（数百个 chunk）一次性编码导致内存溢出
+- **Collection 删除**：支持一次性删除整个知识库及其所有文档
+- **并发访问安全**：为 `_registry.json` 增加文件锁，VectorStore 操作增加线程安全保护，防止 REST API 并发请求导致数据损坏
 
 ## 许可证
 

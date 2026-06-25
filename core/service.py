@@ -297,6 +297,7 @@ def search(
     collection: str = "default",
     rerank: bool | None = None,
     filter: str = "",
+    expand_context: int = 0,
 ) -> list[dict]:
     """Search the knowledge base.
 
@@ -308,12 +309,15 @@ def search(
             None = use collection config default.
         filter: Glob pattern to filter by source file path (e.g. "*.md", "**/docs/*").
             Empty string means no filtering.
+        expand_context: Number of neighboring chunks to include before and after
+            each result for broader context. 0 = no expansion (default).
 
     Returns:
         List of result dicts with keys:
         id, score, text, source, chunk_index
         (plus rerank_score if rerank=True)
     """
+    from core.chunker import compute_doc_id
     from core.reranker import RerankerService
 
     # Resolve rerank from collection config if not specified
@@ -347,6 +351,41 @@ def search(
         results = reranker.rerank(query, results, top_n=top_k)
     else:
         results = results[:top_k]
+
+    # Context expansion: include neighboring chunks for broader context
+    if expand_context > 0 and results:
+        expanded = []
+        seen_ids = set()
+
+        for r in results:
+            source = r.get("source", "")
+            chunk_index = r.get("chunk_index", 0)
+            doc_id = compute_doc_id(source)
+
+            neighbors = store.fetch_neighbors(
+                source=source,
+                chunk_index=chunk_index,
+                doc_id=doc_id,
+                n_before=expand_context,
+                n_after=expand_context,
+                collection=collection,
+            )
+
+            # Merge original + neighbors, deduplicate, sort by chunk_index
+            all_chunks = {r["id"]: r}
+            for n in neighbors:
+                if n["id"] not in all_chunks:
+                    all_chunks[n["id"]] = n
+
+            sorted_chunks = sorted(all_chunks.values(), key=lambda c: c.get("chunk_index", 0))
+            expanded_text = "\n\n".join(c["text"] for c in sorted_chunks if c.get("text"))
+
+            expanded_result = dict(r)
+            expanded_result["text"] = expanded_text
+            expanded.append(expanded_result)
+            seen_ids.add(r["id"])
+
+        results = expanded
 
     return results
 

@@ -113,6 +113,7 @@ def search(
     collection: str = "default",
     rerank: bool | None = None,
     filter: str = "",
+    expand_context: int = 0,
 ) -> str:
     """Search the knowledge base for relevant document chunks.
 
@@ -128,10 +129,15 @@ def search(
             default (default: False unless configured otherwise).
         filter: Glob pattern to filter by source file path, e.g. "*.md",
             "**/docs/*", "README*". Leave empty to search all documents (default: "").
+        expand_context: Number of neighboring chunks to include before and
+            after each result for broader context. E.g. 1 includes the
+            previous and next chunk, giving the LLM more surrounding
+            context. 0 = no expansion (default: 0).
     """
     results = service.search(
         query=query, top_k=top_k, collection=collection,
         rerank=rerank, filter=filter,
+        expand_context=expand_context,
     )
 
     if not results:

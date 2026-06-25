@@ -91,12 +91,15 @@ class EmbeddingService:
         return embeddings.tolist()
 
     def encode_query(self, query: str) -> list[float]:
-        """Encode a single query string into a normalized embedding vector."""
+        """Encode a single query string into a normalized embedding vector.
+
+        Prepends "query: " prefix as recommended by Qwen3-Embedding for
+        asymmetric retrieval (short query vs. long document). The model's
+        training uses task-specific instructions to improve relevance.
+        """
         self._ensure_loaded()
-        # Qwen3-Embedding recommends adding "query:" prefix for retrieval queries
-        # But we keep it simple here since the model handles it well without prefix
         embedding = self._model.encode(
-            [query],
+            [f"query: {query}"],
             normalize_embeddings=True,
             show_progress_bar=False,
         )
