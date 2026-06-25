@@ -11,6 +11,7 @@
 - **多格式支持**：纯文本文件（40+ 种：md、txt、py、js、ts、go、rs 等）和二进制文档（PDF、DOCX、PPTX、XLSX）
 - **嵌入式向量库**：zvec — 零配置、无需 Docker、WAL 持久化、HNSW 索引
 - **本地嵌入模型**：Qwen3-Embedding-0.6B（0.6B 参数、1024 维、32K 上下文、中英文双语）
+- **可选 Reranker**：bge-reranker-v2-m3 交叉编码器，提升检索精度
 - **三种传输模式**：stdio、SSE、Streamable HTTP
 - **多知识库隔离**：将文档分隔到不同的 Collection 中独立检索
 
@@ -49,6 +50,7 @@ python server.py --mode streamable-http --host 0.0.0.0 --port 8000
 | `RAG_MCP_HOST` | 绑定地址 | `127.0.0.1` |
 | `RAG_MCP_PORT` | 绑定端口 | `8000` |
 | `RAG_EMBEDDING_MODEL` | 嵌入模型名称 | `Qwen/Qwen3-Embedding-0.6B` |
+| `RAG_RERANKER_MODEL` | Reranker 模型名称 | `BAAI/bge-reranker-v2-m3` |
 | `RAG_DATA_DIR` | 向量数据目录 | `./data` |
 
 ## 客户端配置
@@ -101,6 +103,7 @@ python server.py --mode streamable-http --host 0.0.0.0 --port 8000
 | `query` | string | （必填） | 自然语言搜索查询 |
 | `top_k` | int | 5 | 返回结果数量 |
 | `collection` | string | `"default"` | 搜索的知识库 |
+| `rerank` | bool | `false` | 启用交叉编码器 Reranker 提升精度 |
 
 ### `ingest_file` — 导入文件
 
@@ -164,8 +167,9 @@ flowchart TB
             direction TB
             T1["导入流水线"] ~~~ T2["检索流水线"] ~~~ T3["Collection 管理器"]
         end
-        Tools --> Embed & Vec
+        Tools --> Embed & Rerank & Vec
         Embed["sentence-transformers<br/>Qwen3-Embedding-0.6B"]
+        Rerank["Cross-Encoder<br/>bge-reranker-v2-m3"]
         Vec["zvec<br/>./data/"]
     end
 
@@ -173,6 +177,7 @@ flowchart TB
     style Server fill:#f5f5f5,stroke:#333
     style Tools fill:#fff3e0,stroke:#FF9800
     style Embed fill:#fce4ec,stroke:#E91E63
+    style Rerank fill:#e8eaf6,stroke:#3F51B5
     style Vec fill:#f3e5f5,stroke:#9C27B0
 ```
 
@@ -185,6 +190,7 @@ wandering-rag-mcp/
 ├── core/
 │   ├── chunker.py          # 递归文本分块
 │   ├── embeddings.py       # sentence-transformers 封装（懒加载）
+│   ├── reranker.py         # Cross-Encoder Reranker（懒加载）
 │   └── vector_store.py     # zvec 封装（增删查 + 搜索）
 ├── data/                   # zvec 数据存储（运行时自动创建）
 │   └── default/
@@ -195,7 +201,7 @@ wandering-rag-mcp/
 
 1. **导入**：读取文件（纯文本直接读取，二进制文档通过 markitdown 转换）→ 切分为重叠文本块 → 每块嵌入为 1024 维向量 → 连同元数据（文本、来源路径、块序号）存入 zvec
 
-2. **检索**：查询文本 → 嵌入为向量 → zvec ANN 搜索返回 top-k 最近邻文本块及相似度分数 → 格式化为带来源引用的文本返回
+2. **检索**：查询文本 → 嵌入为向量 → zvec ANN 搜索返回候选文本块 → 可选 Cross-Encoder Reranker 精排提升精度 → 格式化为带来源引用的文本返回
 
 3. **文档 ID**：使用文件路径的 SHA256 哈希前 16 位作为稳定的文档 ID，支持幂等重复导入和按路径删除。
 

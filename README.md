@@ -11,6 +11,7 @@ No external LLM required — the MCP server handles retrieval, and the client (Q
 - **Multi-format support**: Plain text files (40+ types: md, txt, py, js, ts, go, rs, etc.) and binary documents (PDF, DOCX, PPTX, XLSX)
 - **Embedded vector DB**: zvec — zero-config, no Docker, WAL-persistent, HNSW-indexed
 - **Local embedding**: Qwen3-Embedding-0.6B (0.6B params, 1024-dim, 32K context, bilingual CN/EN)
+- **Optional reranker**: bge-reranker-v2-m3 cross-encoder for higher retrieval accuracy
 - **Three transport modes**: stdio, SSE, Streamable HTTP
 - **Multi-collection**: Isolate documents into separate knowledge bases
 
@@ -49,6 +50,7 @@ Environment variables are also supported:
 | `RAG_MCP_HOST` | Bind host | `127.0.0.1` |
 | `RAG_MCP_PORT` | Bind port | `8000` |
 | `RAG_EMBEDDING_MODEL` | Embedding model name | `Qwen/Qwen3-Embedding-0.6B` |
+| `RAG_RERANKER_MODEL` | Reranker model name | `BAAI/bge-reranker-v2-m3` |
 | `RAG_DATA_DIR` | Vector data directory | `./data` |
 
 ## Client Configuration
@@ -101,6 +103,7 @@ Search the knowledge base with natural language queries.
 | `query` | string | (required) | Natural language search query |
 | `top_k` | int | 5 | Number of results to return |
 | `collection` | string | `"default"` | Collection to search |
+| `rerank` | bool | `false` | Use cross-encoder reranker for higher accuracy |
 
 ### `ingest_file`
 
@@ -164,8 +167,9 @@ flowchart TB
             direction TB
             T1["Ingest Pipeline"] ~~~ T2["Search Pipeline"] ~~~ T3["Collection Manager"]
         end
-        Tools --> Embed & Vec
+        Tools --> Embed & Rerank & Vec
         Embed["sentence-transformers<br/>Qwen3-Embedding-0.6B"]
+        Rerank["Cross-Encoder<br/>bge-reranker-v2-m3"]
         Vec["zvec<br/>./data/"]
     end
 
@@ -173,6 +177,7 @@ flowchart TB
     style Server fill:#f5f5f5,stroke:#333
     style Tools fill:#fff3e0,stroke:#FF9800
     style Embed fill:#fce4ec,stroke:#E91E63
+    style Rerank fill:#e8eaf6,stroke:#3F51B5
     style Vec fill:#f3e5f5,stroke:#9C27B0
 ```
 
@@ -185,6 +190,7 @@ wandering-rag-mcp/
 ├── core/
 │   ├── chunker.py          # Recursive text chunking
 │   ├── embeddings.py       # sentence-transformers wrapper (lazy load)
+│   ├── reranker.py         # Cross-encoder reranker (lazy load)
 │   └── vector_store.py     # zvec wrapper (CRUD + search)
 ├── data/                   # zvec storage (auto-created at runtime)
 │   └── default/
@@ -195,7 +201,7 @@ wandering-rag-mcp/
 
 1. **Ingest**: File is read (plain text or converted via markitdown) → split into overlapping chunks → each chunk embedded into a 1024-dim vector → stored in zvec with metadata (text, source path, chunk index)
 
-2. **Search**: Query text → embedded into vector → zvec ANN search returns top-k nearest chunks with similarity scores → returned as formatted text with source references
+2. **Search**: Query text → embedded into vector → zvec ANN search returns top-k nearest chunks with similarity scores → optionally reranked by cross-encoder for higher accuracy → returned as formatted text with source references
 
 3. **Document ID**: SHA256 hash of the file path (first 16 chars) is used as a stable document ID, enabling idempotent re-imports and deletion by file path.
 

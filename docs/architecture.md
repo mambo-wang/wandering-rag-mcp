@@ -94,6 +94,21 @@ embeddings = model.encode(texts, normalize_embeddings=True)
 | PPTX | PptxConverter | 基于 python-pptx |
 | XLSX | XlsxConverter | 基于 openpyxl |
 
+### 2.5 Reranker：bge-reranker-v2-m3
+
+[bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) 是 BAAI 开源的 Cross-Encoder 重排序模型，支持中英文等 100+ 语言。
+
+与 Bi-Encoder（Qwen3-Embedding）的区别：
+
+| | Bi-Encoder (Embedding) | Cross-Encoder (Reranker) |
+|---|---|---|
+| 输入 | 单独编码 query 和 document | 拼接 (query, document) 联合编码 |
+| 速度 | 快（可预计算向量） | 慢（每对都要推理） |
+| 精度 | 中等 | 高 |
+| 适用阶段 | 粗筛（从海量候选中快速召回） | 精排（对少量候选重新打分） |
+
+本项目采用**两阶段检索**策略：先用 Bi-Encoder 从 zvec 召回较多候选（如 20 条），再用 Cross-Encoder 精排取 top-5。Reranker 为可选功能，默认关闭，可通过 `search` 工具的 `rerank=true` 参数启用。
+
 ## 3. 系统架构
 
 ```mermaid
@@ -124,7 +139,11 @@ flowchart TB
 
         subgraph Search["检索流水线"]
             S1["查询文本"] --> S2["嵌入编码"]
-            S2 --> S3["zvec ANN 搜索"] --> S4["返回 top-k 结果"]
+            S2 --> S3["zvec ANN 搜索<br/>(召回较多候选)"]
+            S3 --> S4{"rerank?"}
+            S4 -->|"否"| S5a["返回 top-k 结果"]
+            S4 -->|"是"| S5b["Cross-Encoder 精排"]
+            S5b --> S5c["返回 top-k 结果"]
         end
 
         Ingest & Search --> Core
@@ -133,7 +152,8 @@ flowchart TB
             direction LR
             M1["chunker.py<br/>递归文本分块"]
             M2["embeddings.py<br/>嵌入模型封装"]
-            M3["vector_store.py<br/>zvec 封装"]
+            M3["reranker.py<br/>Reranker 封装"]
+            M4["vector_store.py<br/>zvec 封装"]
         end
 
         Core --> Infra
@@ -219,6 +239,22 @@ class Chunk:
 
 **删除策略**：通过 `{doc_id}_{0..N}` 模式逐一 fetch 检查存在性，收集到所有属于该文档的 chunk ID 后批量删除。
 
+### 4.4 Reranker 服务 (`core/reranker.py`)
+
+单例模式的 `RerankerService`，封装 sentence-transformers 的 CrossEncoder：
+
+- **懒加载**：首次调用 `rerank()` 时才加载模型，与 EmbeddingService 独立
+- **可选启用**：search 工具的 `rerank` 参数控制，默认关闭以保持检索速度
+- **两阶段检索**：启用时先从 zvec 召回 `max(top_k * 3, 20)` 条候选，再由 Cross-Encoder 对 (query, text) 对逐一打分，按新分数排序后返回 top-k
+- **模型可替换**：通过 `RAG_RERANKER_MODEL` 环境变量切换模型
+
+```python
+# Reranker 调用流程
+reranker = RerankerService()
+reranked = reranker.rerank(query="如何配置 MCP", candidates=results, top_n=5)
+# reranked 中每条结果新增 rerank_score 字段
+```
+
 ## 5. 数据流
 
 ### 5.1 导入流程
@@ -244,12 +280,15 @@ flowchart TD
 flowchart TD
     A["用户查询 (自然语言)"] --> B["embeddings.py: encode_query()<br/>→ 1024 维归一化向量"]
     B --> C["查询向量"]
-    C --> D["vector_store.py:<br/>zvec.query(Query('embedding', vector=...), topk=5)"]
-    D --> E["top-k 最近邻 Doc 列表<br/>(按相似度排序)"]
-    E --> F["提取 .id, .score, .fields<br/>(text, source, chunk_index)"]
-    F --> G["格式化结果文本<br/>(含来源引用和相似度分数)"]
-    G --> H["返回给 MCP 客户端"]
-    H --> I["客户端大模型基于检索结果生成回答"]
+    C --> D["vector_store.py:<br/>zvec.query(Query('embedding', vector=...), topk=max(k*3,20))"]
+    D --> E["候选结果集<br/>(按向量相似度排序)"]
+    E --> F{"rerank?"}
+    F -->|"否"| H["取 top-k，格式化结果<br/>(含来源引用和相似度分数)"]
+    F -->|"是"| G["reranker.py: CrossEncoder 打分<br/>(query, text) 逐对推理"]
+    G --> G2["按 rerank_score 降序排序"]
+    G2 --> H
+    H --> I["返回给 MCP 客户端"]
+    I --> J["客户端大模型基于检索结果生成回答"]
 ```
 
 ## 6. 存储结构
@@ -367,3 +406,5 @@ wandering-rag-mcp
 | LLM | 不内置 | MCP Server 只做检索，生成由客户端承担，避免绑定特定 LLM 供应商 |
 | 文档格式 | markitdown 统一转换 | 一套转换管线覆盖 PDF/DOCX/PPTX/XLSX，维护成本低 |
 | 模型加载 | 懒加载 | 避免 Server 冷启动时加载 ~1.2GB 模型导致的延迟 |
+| Reranker | 可选、默认关闭 | 兼顾速度和精度；Cross-Encoder 推理较慢，不适合作为默认行为 |
+| Reranker 模型 | bge-reranker-v2-m3 | 100+ 语言、中英文双语、与 Qwen3-Embedding 搭配效果良好 |

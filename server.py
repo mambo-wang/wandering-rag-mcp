@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.chunker import chunk_text, compute_doc_id
 from core.vector_store import VectorStore
+from core.reranker import RerankerService
 
 # Configure logging to stderr (stdout is reserved for MCP JSON-RPC)
 logging.basicConfig(
@@ -162,6 +163,7 @@ def search(
     query: str,
     top_k: int = 5,
     collection: str = "default",
+    rerank: bool = False,
 ) -> str:
     """Search the knowledge base for relevant document chunks.
 
@@ -172,23 +174,43 @@ def search(
         query: Natural language search query.
         top_k: Number of results to return (default: 5).
         collection: Knowledge base collection to search (default: "default").
+        rerank: If True, use a cross-encoder reranker model to improve
+            result relevance. Fetches more candidates from vector search
+            then reranks them. Slightly slower but more accurate (default: False).
     """
     store = get_store()
+
+    # When reranking, fetch more candidates for the reranker to choose from
+    if rerank:
+        fetch_k = max(top_k * 3, 20)
+    else:
+        fetch_k = top_k
+
     try:
-        results = store.search(query, top_k=top_k, collection=collection)
+        results = store.search(query, top_k=fetch_k, collection=collection)
     except Exception as e:
         return f"Search failed: {e}"
 
     if not results:
         return "No relevant documents found in the knowledge base."
 
+    # Apply reranking if requested
+    if rerank and len(results) > 1:
+        reranker = RerankerService()
+        results = reranker.rerank(query, results, top_n=top_k)
+        score_key = "rerank_score"
+    else:
+        score_key = "score"
+
     output_parts = [f"Found {len(results)} relevant chunks:\n"]
     for i, r in enumerate(results, 1):
-        score_pct = f"{r['score'] * 100:.1f}%"
+        score_val = r.get(score_key, r.get("score", 0))
+        score_pct = f"{score_val * 100:.1f}%"
         source = r.get("source", "unknown")
         text = r.get("text", "")
+        label = "rerank" if rerank else "vector"
         output_parts.append(
-            f"--- Result {i} (score: {score_pct}, source: {source}) ---\n{text}\n"
+            f"--- Result {i} ({label} score: {score_pct}, source: {source}) ---\n{text}\n"
         )
 
     return "\n".join(output_parts)
