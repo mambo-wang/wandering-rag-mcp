@@ -49,6 +49,7 @@ mcp>=1.0
 zvec>=0.5.0
 sentence-transformers>=3.0
 markitdown[all]>=0.1
+python-multipart>=0.0.6
 DEPS
 ) 2>&1 | tail -5
 
@@ -62,6 +63,7 @@ mcp>=1.0
 zvec>=0.5.0
 sentence-transformers>=3.0
 markitdown[all]>=0.1
+python-multipart>=0.0.6
 DEPS
 ) 2>&1 | tail -5
 
@@ -96,7 +98,8 @@ echo "[5/5] 复制项目源码 ..."
 cp "$PROJECT_DIR/pyproject.toml" "$BUNDLE_DIR/source/"
 cp "$PROJECT_DIR/server.py"      "$BUNDLE_DIR/source/"
 cp -r "$PROJECT_DIR/core"        "$BUNDLE_DIR/source/"
-echo "  -> source/ (pyproject.toml, server.py, core/)"
+cp -r "$PROJECT_DIR/api"         "$BUNDLE_DIR/source/"
+echo "  -> source/ (pyproject.toml, server.py, core/, api/)"
 
 # 复制安装和启动脚本
 cp "$SCRIPT_DIR/install.sh" "$BUNDLE_DIR/"

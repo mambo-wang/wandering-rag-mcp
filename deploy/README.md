@@ -1,8 +1,72 @@
-# 内网离线部署指南
+# 部署指南
 
-本文档说明如何在**无网络、无 Python/pip** 的 Linux 虚拟机上部署 wandering-rag-mcp。
+本文档说明如何在 Linux 服务器上部署 wandering-rag-mcp。
 
-## 前提条件
+## 方式一：在线安装（推荐）
+
+适用于**有网络**的纯净 Linux 服务器，一键安装所有依赖和模型。
+
+### 前提条件
+
+| 项目 | 要求 |
+|---|---|
+| 操作系统 | Linux x86_64 或 aarch64 |
+| 系统工具 | git, python3 (3.10+), pip3 |
+| 网络 | 需要访问 GitHub 和 HuggingFace |
+
+### 安装步骤
+
+```bash
+# 下载安装脚本并执行
+curl -sSL https://raw.githubusercontent.com/mambo-wang/wandering-rag-mcp/main/deploy/setup.sh | bash
+
+# 或指定安装目录
+curl -sSL https://raw.githubusercontent.com/mambo-wang/wandering-rag-mcp/main/deploy/setup.sh | bash -s /opt/wandering-rag-mcp
+```
+
+安装脚本会自动：
+1. 检查系统依赖（git, python3, pip3）
+2. 克隆项目仓库
+3. 创建 Python 虚拟环境
+4. 安装所有 Python 依赖
+5. 下载嵌入模型（约 1.2GB）
+6. 生成环境配置和启动脚本
+
+### 启动服务
+
+```bash
+# SSE 模式（默认，推荐）
+bash ~/wandering-rag-mcp/start.sh
+
+# stdio 模式
+bash ~/wandering-rag-mcp/start.sh stdio
+
+# Streamable HTTP 模式
+bash ~/wandering-rag-mcp/start.sh http
+```
+
+### 可选：下载 Reranker 模型
+
+Reranker 模型（bge-reranker-v2-m3）为可选功能，默认不下载。如需使用：
+
+```bash
+# 安装时下载
+DOWNLOAD_RERANKER=true bash setup.sh
+
+# 或安装后单独下载
+source ~/wandering-rag-mcp/env.sh
+huggingface-cli download BAAI/bge-reranker-v2-m3 \
+    --local-dir ~/wandering-rag-mcp/models/bge-reranker-v2-m3 \
+    --local-dir-use-symlinks False
+```
+
+---
+
+## 方式二：离线安装
+
+适用于**无网络**的内网 Linux 服务器。需要在有网的机器上提前打包。
+
+### 前提条件
 
 | 项目 | 要求 |
 |---|---|
@@ -11,7 +75,7 @@
 | 传输方式 | U 盘、SCP、或任何文件传输工具 |
 | 预估包大小 | ~3GB（含两个模型权重） |
 
-## 步骤一：有网机器上打包
+### 步骤一：有网机器上打包
 
 在有网络的机器上运行 `prepare.sh`，它会自动下载 Miniconda、所有 pip 依赖、模型权重，并打包为单个 tar.gz 文件。
 
@@ -27,7 +91,7 @@ bash prepare.sh aarch64
 
 完成后会生成 `deploy/wandering-rag-mcp-offline.tar.gz`（约 3GB）。
 
-## 步骤二：传输到内网 VM
+### 步骤二：传输到内网 VM
 
 将以下文件拷贝到内网 VM 的任意目录（如 `~/tmp/`）：
 
@@ -35,7 +99,7 @@ bash prepare.sh aarch64
 wandering-rag-mcp-offline.tar.gz
 ```
 
-## 步骤三：内网 VM 上安装
+### 步骤三：内网 VM 上安装
 
 ```bash
 # 解压
@@ -57,7 +121,7 @@ bash install.sh /opt/wandering-rag-mcp
 4. 部署项目源码到 `src/` 目录
 5. 生成 `env.sh` 环境配置脚本
 
-## 步骤四：启动服务
+### 步骤四：启动服务
 
 ```bash
 # stdio 模式（默认）

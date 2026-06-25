@@ -44,7 +44,7 @@ source "$ENV_DIR/bin/activate"
 
 # 从本地 wheels 目录安装所有包（纯离线）
 pip install --no-index --find-links "$BUNDLE_DIR/wheels" \
-    mcp zvec sentence-transformers "markitdown[all]" 2>&1 | tail -10
+    mcp zvec sentence-transformers "markitdown[all]" python-multipart 2>&1 | tail -10
 
 echo "  -> 依赖安装完成"
 
@@ -111,7 +111,8 @@ echo "  │   └── bge-reranker-v2-m3/"
 echo "  ├── src/                # 项目源码"
 echo "  │   ├── server.py"
 echo "  │   ├── pyproject.toml"
-echo "  │   └── core/"
+echo "  │   ├── core/"
+echo "  │   └── api/            # REST API"
 echo "  ├── data/               # 向量数据（运行时生成）"
 echo "  └── env.sh              # 环境配置脚本"
 echo ""

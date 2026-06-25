@@ -311,6 +311,33 @@ wandering-rag-mcp/
 
 详细的项目架构和技术栈说明请参阅 [技术架构文档](docs/architecture.md)。
 
+## 部署
+
+### 在线安装（推荐）
+
+适用于有网络的纯净 Linux 服务器：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/mambo-wang/wandering-rag-mcp/main/deploy/setup.sh | bash
+```
+
+自动安装 Python 虚拟环境、所有依赖、嵌入模型，并生成启动脚本。
+
+### 离线安装
+
+适用于无网络的内网服务器，使用 `deploy/` 目录下的打包脚本：
+
+```bash
+# 在有网的机器上打包（约 3GB，含模型）
+cd deploy && bash prepare.sh x86_64
+
+# 将 wandering-rag-mcp-offline.tar.gz 拷贝到内网服务器后：
+tar xzf wandering-rag-mcp-offline.tar.gz
+cd bundle && bash install.sh
+```
+
+完整部署指南请参阅 [deploy/README.md](deploy/README.md)。
+
 ## 许可证
 
 MIT

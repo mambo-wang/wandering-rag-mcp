@@ -311,6 +311,33 @@ wandering-rag-mcp/
 
 For detailed architecture and technical stack explanation, see [Architecture Document](docs/architecture.md).
 
+## Deployment
+
+### Quick Install (Online)
+
+For a clean Linux server with internet access:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/mambo-wang/wandering-rag-mcp/main/deploy/setup.sh | bash
+```
+
+This installs everything: Python venv, dependencies, embedding model, and generates start scripts.
+
+### Offline Install
+
+For air-gapped servers, use the offline packaging scripts in `deploy/`:
+
+```bash
+# On a machine with internet: prepare the bundle (~3GB with models)
+cd deploy && bash prepare.sh x86_64
+
+# Transfer wandering-rag-mcp-offline.tar.gz to the target server, then:
+tar xzf wandering-rag-mcp-offline.tar.gz
+cd bundle && bash install.sh
+```
+
+See [deploy/README.md](deploy/README.md) for full deployment guide.
+
 ## License
 
 MIT
