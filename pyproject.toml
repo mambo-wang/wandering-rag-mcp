@@ -1,0 +1,18 @@
+[project]
+name = "wandering-rag-mcp"
+version = "0.1.0"
+description = "RAG knowledge base MCP server using zvec and Qwen3-Embedding"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0",
+    "zvec>=0.5.0",
+    "sentence-transformers>=3.0",
+    "markitdown[all]>=0.1",
+]
+
+[project.scripts]
+wandering-rag-mcp = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,217 @@
+# wandering-rag-mcp
+
+[English](README.md) | **中文**
+
+本地 RAG（检索增强生成）知识库 MCP 服务器，通过 MCP 协议暴露语义文档搜索工具。使用阿里巴巴开源的 [zvec](https://github.com/alibaba/zvec) 嵌入式向量数据库存储向量，使用 [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) 进行文本嵌入。
+
+无需配置外部大模型 — MCP Server 只负责检索，生成由客户端（QoderWork、Claude Desktop 等）自带的大模型完成。
+
+## 特性
+
+- **多格式支持**：纯文本文件（40+ 种：md、txt、py、js、ts、go、rs 等）和二进制文档（PDF、DOCX、PPTX、XLSX）
+- **嵌入式向量库**：zvec — 零配置、无需 Docker、WAL 持久化、HNSW 索引
+- **本地嵌入模型**：Qwen3-Embedding-0.6B（0.6B 参数、1024 维、32K 上下文、中英文双语）
+- **三种传输模式**：stdio、SSE、Streamable HTTP
+- **多知识库隔离**：将文档分隔到不同的 Collection 中独立检索
+
+## 快速开始
+
+### 环境要求
+
+- Python >= 3.10
+
+### 安装
+
+```bash
+git clone <repo-url>
+cd wandering-rag-mcp
+pip install -e .
+```
+
+### 启动
+
+```bash
+# stdio 模式（默认，用于 QoderWork / Claude Desktop）
+python server.py
+
+# SSE 模式
+python server.py --mode sse --port 8000
+
+# Streamable HTTP 模式
+python server.py --mode streamable-http --host 0.0.0.0 --port 8000
+```
+
+也支持通过环境变量配置：
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `RAG_MCP_MODE` | 传输模式 | `stdio` |
+| `RAG_MCP_HOST` | 绑定地址 | `127.0.0.1` |
+| `RAG_MCP_PORT` | 绑定端口 | `8000` |
+| `RAG_EMBEDDING_MODEL` | 嵌入模型名称 | `Qwen/Qwen3-Embedding-0.6B` |
+| `RAG_DATA_DIR` | 向量数据目录 | `./data` |
+
+## 客户端配置
+
+### stdio 模式（QoderWork / Claude Desktop）
+
+```json
+{
+  "mcpServers": {
+    "wandering-rag-mcp": {
+      "command": "python",
+      "args": ["D:\\repos\\rag-mcp\\server.py"]
+    }
+  }
+}
+```
+
+### SSE 模式
+
+```json
+{
+  "mcpServers": {
+    "wandering-rag-mcp": {
+      "url": "http://your-server:8000/sse"
+    }
+  }
+}
+```
+
+### Streamable HTTP 模式
+
+```json
+{
+  "mcpServers": {
+    "wandering-rag-mcp": {
+      "url": "http://your-server:8000/mcp"
+    }
+  }
+}
+```
+
+## MCP 工具
+
+### `search` — 语义搜索
+
+在知识库中搜索与查询相关的文档片段。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `query` | string | （必填） | 自然语言搜索查询 |
+| `top_k` | int | 5 | 返回结果数量 |
+| `collection` | string | `"default"` | 搜索的知识库 |
+
+### `ingest_file` — 导入文件
+
+将单个文件导入知识库。支持纯文本和二进制文档格式。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `filepath` | string | （必填） | 文件路径 |
+| `collection` | string | `"default"` | 目标知识库 |
+| `chunk_size` | int | 500 | 每块最大字符数 |
+
+支持格式：`.md`、`.txt`、`.py`、`.js`、`.ts`、`.pdf`、`.docx`、`.pptx`、`.xlsx` 等 40+ 种。
+
+### `ingest_directory` — 批量导入目录
+
+将目录下所有支持的文件批量导入知识库。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `dirpath` | string | （必填） | 目录路径 |
+| `collection` | string | `"default"` | 目标知识库 |
+| `recursive` | bool | `true` | 是否扫描子目录 |
+| `extensions` | string | `""` | 逗号分隔的扩展名过滤（空=全部支持格式） |
+| `chunk_size` | int | 500 | 每块最大字符数 |
+
+### `list_collections` — 列出知识库
+
+列出所有已创建的知识库 Collection。
+
+### `list_documents` — 列出文档
+
+列出知识库中已导入的所有文档。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `collection` | string | `"default"` | 知识库名称 |
+
+### `delete_document` — 删除文档
+
+从知识库中删除指定文档及其所有分块。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `filepath` | string | （必填） | 导入时使用的文件路径 |
+| `collection` | string | `"default"` | 知识库名称 |
+
+## 架构
+
+```mermaid
+flowchart TB
+    subgraph Client["MCP 客户端（QoderWork 等）"]
+        direction LR
+        C1["用户提问"] --> C2["调用 MCP 工具检索"] --> C3["大模型回答"]
+    end
+
+    Client <-->|"stdio / SSE / Streamable HTTP"| Server
+
+    subgraph Server["RAG MCP Server (FastMCP)"]
+        direction LR
+        subgraph Tools[" "]
+            direction TB
+            T1["导入流水线"] ~~~ T2["检索流水线"] ~~~ T3["Collection 管理器"]
+        end
+        Tools --> Embed & Vec
+        Embed["sentence-transformers<br/>Qwen3-Embedding-0.6B"]
+        Vec["zvec<br/>./data/"]
+    end
+
+    style Client fill:#e8f4f8,stroke:#2196F3
+    style Server fill:#f5f5f5,stroke:#333
+    style Tools fill:#fff3e0,stroke:#FF9800
+    style Embed fill:#fce4ec,stroke:#E91E63
+    style Vec fill:#f3e5f5,stroke:#9C27B0
+```
+
+### 项目结构
+
+```
+wandering-rag-mcp/
+├── pyproject.toml          # 依赖声明和入口点
+├── server.py               # MCP 服务入口 + 6 个工具定义
+├── core/
+│   ├── chunker.py          # 递归文本分块
+│   ├── embeddings.py       # sentence-transformers 封装（懒加载）
+│   └── vector_store.py     # zvec 封装（增删查 + 搜索）
+├── data/                   # zvec 数据存储（运行时自动创建）
+│   └── default/
+└── .gitignore
+```
+
+## 工作原理
+
+1. **导入**：读取文件（纯文本直接读取，二进制文档通过 markitdown 转换）→ 切分为重叠文本块 → 每块嵌入为 1024 维向量 → 连同元数据（文本、来源路径、块序号）存入 zvec
+
+2. **检索**：查询文本 → 嵌入为向量 → zvec ANN 搜索返回 top-k 最近邻文本块及相似度分数 → 格式化为带来源引用的文本返回
+
+3. **文档 ID**：使用文件路径的 SHA256 哈希前 16 位作为稳定的文档 ID，支持幂等重复导入和按路径删除。
+
+## 依赖
+
+| 包 | 用途 |
+|---|---|
+| `mcp` | MCP 协议 SDK（FastMCP） |
+| `zvec` | 阿里巴巴开源嵌入式向量数据库 |
+| `sentence-transformers` | 加载和运行嵌入模型 |
+| `markitdown[all]` | 将 PDF/DOCX/PPTX/XLSX 转换为 Markdown |
+
+## 技术文档
+
+详细的项目架构和技术栈说明请参阅 [技术架构文档](docs/architecture.md)。
+
+## 许可证
+
+MIT
