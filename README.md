@@ -121,6 +121,7 @@ Import a single file into the knowledge base.
 | `collection` | string | `"default"` | Target collection |
 | `chunk_size` | int | 500 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if file hasn't changed |
+| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` (character-based splitting) or `semantic` (embedding similarity-based splitting) |
 
 > **Change detection**: By default, files that haven't changed since last import are skipped. Use `force=true` to re-import anyway.
 
@@ -138,6 +139,7 @@ Batch import all files in a directory.
 | `extensions` | string | `""` | Comma-separated extensions filter (empty = all supported) |
 | `chunk_size` | int | 500 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if files haven't changed |
+| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` or `semantic` |
 
 ### `list_collections`
 
@@ -196,7 +198,7 @@ Upload a file to the knowledge base. Accepts `multipart/form-data` with a `file`
 curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
 ```
 
-Optional query parameter: `chunk_size` (default: 500).
+Optional query parameters: `chunk_size` (default: 500), `chunk_mode` (`recursive` or `semantic`, default: `recursive`).
 
 **Response:**
 ```json
@@ -292,7 +294,7 @@ wandering-rag-mcp/
 │   ├── __init__.py
 │   └── app.py              # REST API routes (starlette)
 ├── core/
-│   ├── chunker.py          # Recursive text chunking
+│   ├── chunker.py          # Text chunking (recursive + semantic)
 │   ├── embeddings.py       # sentence-transformers wrapper (lazy load)
 │   ├── reranker.py         # Cross-encoder reranker (lazy load)
 │   ├── service.py          # Shared business logic (MCP + REST)

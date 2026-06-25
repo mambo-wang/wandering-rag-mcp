@@ -168,3 +168,176 @@ def _split_by_chars(
         chunks.append(text[start:end])
         start = end - chunk_overlap
     return chunks
+
+
+# ── Semantic Chunking ────────────────────────────────────────
+
+
+def semantic_chunk_text(
+    text: str,
+    filepath: str = "",
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+) -> list[Chunk]:
+    """Split text into chunks based on semantic similarity between sentences.
+
+    Uses the embedding model to encode sentences, then detects topic boundaries
+    where adjacent sentence similarity drops below a dynamic threshold
+    (mean - 1 standard deviation). Oversized chunks fall back to recursive
+    character splitting.
+
+    Args:
+        text: The full document text.
+        filepath: Source file path (used for doc_id).
+        chunk_size: Max characters per chunk (safety limit).
+        chunk_overlap: Overlap size (used only for fallback recursive split).
+
+    Returns:
+        List of Chunk objects.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if not text.strip():
+        return []
+
+    doc_id = compute_doc_id(filepath)
+
+    # Step 1: split into sentences (preserving paragraph structure)
+    sentences = _extract_sentences(text)
+    if not sentences:
+        return []
+
+    # Short-circuit: too few sentences or fits in one chunk
+    total_len = sum(len(s) for s in sentences)
+    if len(sentences) <= 2 or total_len <= chunk_size:
+        combined = " ".join(sentences).strip()
+        if combined:
+            return [Chunk(text=combined, source=filepath,
+                          chunk_index=0, doc_id=doc_id)]
+        return []
+
+    # Step 2: encode all sentences
+    try:
+        from core.embeddings import EmbeddingService
+        embedder = EmbeddingService()
+        embeddings = embedder.encode(sentences)
+    except Exception as e:
+        logger.warning(f"Semantic chunking failed to encode sentences: {e}. "
+                       f"Falling back to recursive split.")
+        segments = _recursive_split(text, chunk_size, chunk_overlap)
+        return [
+            Chunk(text=seg.strip(), source=filepath,
+                  chunk_index=i, doc_id=doc_id)
+            for i, seg in enumerate(segments) if seg.strip()
+        ]
+
+    if len(embeddings) < 2:
+        combined = " ".join(sentences).strip()
+        return [Chunk(text=combined, source=filepath,
+                      chunk_index=0, doc_id=doc_id)] if combined else []
+
+    # Step 3: compute adjacent cosine similarities
+    similarities = []
+    for i in range(len(embeddings) - 1):
+        sim = _dot_product(embeddings[i], embeddings[i + 1])
+        similarities.append(sim)
+
+    # Step 4: dynamic threshold = mean - 1*std
+    threshold = _dynamic_threshold(similarities)
+
+    # Step 5: find breakpoints and group sentences
+    groups = _group_by_breakpoints(sentences, similarities, threshold, chunk_size)
+
+    # Step 6: build chunks, falling back to recursive split for oversized groups
+    chunks = []
+    chunk_idx = 0
+    for group in groups:
+        combined = " ".join(group).strip()
+        if not combined:
+            continue
+        if len(combined) <= chunk_size:
+            chunks.append(Chunk(text=combined, source=filepath,
+                                chunk_index=chunk_idx, doc_id=doc_id))
+            chunk_idx += 1
+        else:
+            # Oversized group: fall back to recursive character split
+            sub_segments = _recursive_split(combined, chunk_size, chunk_overlap)
+            for seg in sub_segments:
+                seg = seg.strip()
+                if seg:
+                    chunks.append(Chunk(text=seg, source=filepath,
+                                        chunk_index=chunk_idx, doc_id=doc_id))
+                    chunk_idx += 1
+
+    return chunks
+
+
+def _extract_sentences(text: str) -> list[str]:
+    """Split text into sentences, treating paragraph breaks as sentence boundaries."""
+    import re
+    # First split by paragraphs
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    sentences = []
+    for para in paragraphs:
+        # Within each paragraph, split by sentence-ending punctuation
+        parts = re.split(r'(?<=[。！？.!?])\s*', para)
+        for part in parts:
+            part = part.strip()
+            if part:
+                sentences.append(part)
+    return sentences
+
+
+def _dot_product(a: list[float], b: list[float]) -> float:
+    """Compute dot product of two vectors (cosine similarity for normalized vectors)."""
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _dynamic_threshold(similarities: list[float], n_sigma: float = 1.0) -> float:
+    """Compute dynamic breakpoint threshold as mean - n_sigma * std."""
+    if not similarities:
+        return 0.5
+    n = len(similarities)
+    mean = sum(similarities) / n
+    if n < 2:
+        return mean
+    variance = sum((s - mean) ** 2 for s in similarities) / n
+    std = variance ** 0.5
+    return mean - n_sigma * std
+
+
+def _group_by_breakpoints(
+    sentences: list[str],
+    similarities: list[float],
+    threshold: float,
+    chunk_size: int,
+) -> list[list[str]]:
+    """Group sentences into chunks based on similarity breakpoints.
+
+    A new chunk starts wherever adjacent similarity drops below threshold,
+    or when the current group would exceed chunk_size.
+    """
+    groups = []
+    current_group = [sentences[0]]
+    current_len = len(sentences[0])
+
+    for i in range(len(similarities)):
+        next_sentence = sentences[i + 1]
+        next_len = len(next_sentence) + 1  # +1 for space join
+
+        is_break = similarities[i] < threshold
+        would_exceed = current_len + next_len > chunk_size
+
+        if is_break or (would_exceed and current_group):
+            groups.append(current_group)
+            current_group = [next_sentence]
+            current_len = len(next_sentence)
+        else:
+            current_group.append(next_sentence)
+            current_len += next_len
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups

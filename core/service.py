@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 
-from core.chunker import chunk_text
+from core.chunker import chunk_text, semantic_chunk_text
 from core.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ def ingest_file(
     collection: str = "default",
     chunk_size: int = 500,
     force: bool = False,
+    chunk_mode: str = "recursive",
 ) -> dict:
     """Import a single file into the knowledge base.
 
@@ -129,6 +130,8 @@ def ingest_file(
         collection: Target collection.
         chunk_size: Max characters per chunk.
         force: If True, re-import even if file hasn't changed.
+        chunk_mode: Chunking strategy - "recursive" (character-based) or
+            "semantic" (embedding similarity-based).
 
     Returns:
         {"status": "ok", "filepath": str, "chunks": int}
@@ -156,7 +159,11 @@ def ingest_file(
     # Idempotent: delete existing chunks first
     store.delete_document(filepath, collection=collection)
 
-    chunks = chunk_text(content, filepath=filepath, chunk_size=chunk_size)
+    if chunk_mode == "semantic":
+        chunks = semantic_chunk_text(content, filepath=filepath,
+                                     chunk_size=chunk_size)
+    else:
+        chunks = chunk_text(content, filepath=filepath, chunk_size=chunk_size)
     if not chunks:
         return {"status": "error", "error": f"No chunks created from: {filepath}"}
 
@@ -172,6 +179,7 @@ def ingest_content(
     filename: str,
     collection: str = "default",
     chunk_size: int = 500,
+    chunk_mode: str = "recursive",
 ) -> dict:
     """Import text content (from file upload) into the knowledge base.
 
@@ -180,6 +188,7 @@ def ingest_content(
         filename: Original filename (used for doc_id and source tracking).
         collection: Target collection.
         chunk_size: Max characters per chunk.
+        chunk_mode: Chunking strategy - "recursive" or "semantic".
 
     Returns:
         {"status": "ok", "filename": str, "chunks": int}
@@ -197,7 +206,11 @@ def ingest_content(
     # Idempotent: delete existing chunks
     store.delete_document(virtual_path, collection=collection)
 
-    chunks = chunk_text(content, filepath=virtual_path, chunk_size=chunk_size)
+    if chunk_mode == "semantic":
+        chunks = semantic_chunk_text(content, filepath=virtual_path,
+                                     chunk_size=chunk_size)
+    else:
+        chunks = chunk_text(content, filepath=virtual_path, chunk_size=chunk_size)
     if not chunks:
         return {"status": "error", "error": "No chunks could be created"}
 

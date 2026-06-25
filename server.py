@@ -156,6 +156,7 @@ def ingest_file(
     collection: str = "default",
     chunk_size: int = 500,
     force: bool = False,
+    chunk_mode: str = "recursive",
 ) -> str:
     """Import a file into the knowledge base.
 
@@ -169,9 +170,14 @@ def ingest_file(
         chunk_size: Maximum characters per chunk (default: 500).
         force: If True, re-import even if file content hasn't changed
             since last import (default: False).
+        chunk_mode: Chunking strategy (default: "recursive").
+            "recursive" splits by paragraphs, sentences, then characters.
+            "semantic" uses the embedding model to detect topic boundaries
+            between sentences, producing more semantically coherent chunks.
     """
     result = service.ingest_file(filepath, collection=collection,
-                                  chunk_size=chunk_size, force=force)
+                                  chunk_size=chunk_size, force=force,
+                                  chunk_mode=chunk_mode)
     if result["status"] == "skipped":
         return (
             f"Skipped '{result['filepath']}': file unchanged since last import. "
@@ -193,6 +199,7 @@ def ingest_directory(
     extensions: str = "",
     chunk_size: int = 500,
     force: bool = False,
+    chunk_mode: str = "recursive",
 ) -> str:
     """Batch import all files in a directory into the knowledge base.
 
@@ -208,6 +215,10 @@ def ingest_directory(
         chunk_size: Maximum characters per chunk (default: 500).
         force: If True, re-import files even if they haven't changed
             since last import (default: False).
+        chunk_mode: Chunking strategy (default: "recursive").
+            "recursive" splits by paragraphs, sentences, then characters.
+            "semantic" uses the embedding model to detect topic boundaries
+            between sentences, producing more semantically coherent chunks.
     """
     dirpath = os.path.abspath(dirpath)
 
@@ -248,7 +259,8 @@ def ingest_directory(
 
     for fpath in files:
         result = service.ingest_file(fpath, collection=collection,
-                                      chunk_size=chunk_size, force=force)
+                                      chunk_size=chunk_size, force=force,
+                                      chunk_mode=chunk_mode)
         if result["status"] == "ok":
             total_chunks += result["chunks"]
             success += 1

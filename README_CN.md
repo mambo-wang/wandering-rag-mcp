@@ -121,6 +121,7 @@ python server.py --mode sse --no-api
 | `collection` | string | `"default"` | 目标知识库 |
 | `chunk_size` | int | 500 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
+| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`（按字符递归拆分）或 `semantic`（基于语义相似度拆分） |
 
 > **变更检测**：默认情况下，自上次导入以来未变更的文件会被跳过。使用 `force=true` 强制重新导入。
 
@@ -138,6 +139,7 @@ python server.py --mode sse --no-api
 | `extensions` | string | `""` | 逗号分隔的扩展名过滤（空=全部支持格式） |
 | `chunk_size` | int | 500 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
+| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive` 或 `semantic` |
 
 ### `list_collections` — 列出知识库
 
@@ -196,7 +198,7 @@ python server.py --mode sse --no-api
 curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
 ```
 
-可选查询参数：`chunk_size`（默认：500）。
+可选查询参数：`chunk_size`（默认：500）、`chunk_mode`（`recursive` 或 `semantic`，默认：`recursive`）。
 
 **响应：**
 ```json
@@ -292,7 +294,7 @@ wandering-rag-mcp/
 │   ├── __init__.py
 │   └── app.py              # REST API 路由（starlette）
 ├── core/
-│   ├── chunker.py          # 递归文本分块
+│   ├── chunker.py          # 文本分块（递归字符 + 语义分块）
 │   ├── embeddings.py       # sentence-transformers 封装（懒加载）
 │   ├── reranker.py         # Cross-Encoder Reranker（懒加载）
 │   ├── service.py          # 共享业务逻辑（MCP + REST）

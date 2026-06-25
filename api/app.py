@@ -65,10 +65,13 @@ async def upload_document(request: Request):
     """POST /api/collections/{name}/documents — upload a file.
 
     Accepts multipart/form-data with a 'file' field.
-    Optional query params: chunk_size (int, default 500).
+    Optional query params:
+      chunk_size (int, default 500) - max characters per chunk.
+      chunk_mode (str, default "recursive") - "recursive" or "semantic".
     """
     collection = _get_collection(request)
     chunk_size = int(request.query_params.get("chunk_size", "500"))
+    chunk_mode = request.query_params.get("chunk_mode", "recursive")
 
     try:
         form = await request.form()
@@ -100,7 +103,8 @@ async def upload_document(request: Request):
         with open(tmp_path, "wb") as f:
             f.write(raw)
 
-        result = service.ingest_file(tmp_path, collection=collection, chunk_size=chunk_size)
+        result = service.ingest_file(tmp_path, collection=collection,
+                                      chunk_size=chunk_size, chunk_mode=chunk_mode)
     else:
         # Text file: decode and ingest directly
         try:
@@ -111,6 +115,7 @@ async def upload_document(request: Request):
         result = service.ingest_content(
             content, filename=filename,
             collection=collection, chunk_size=chunk_size,
+            chunk_mode=chunk_mode,
         )
 
     if result.get("status") == "error":
