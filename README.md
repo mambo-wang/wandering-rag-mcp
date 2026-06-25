@@ -12,6 +12,7 @@ No external LLM required — the MCP server handles retrieval, and the client (Q
 - **Embedded vector DB**: zvec — zero-config, no Docker, WAL-persistent, HNSW-indexed
 - **Local embedding**: Qwen3-Embedding-0.6B (0.6B params, 1024-dim, 32K context, bilingual CN/EN)
 - **Optional reranker**: bge-reranker-v2-m3 cross-encoder for higher retrieval accuracy
+- **REST API**: HTTP endpoints for document management (upload/search/delete), runs alongside MCP on the same port
 - **Three transport modes**: stdio, SSE, Streamable HTTP
 - **Multi-collection**: Isolate documents into separate knowledge bases
 
@@ -40,6 +41,9 @@ python server.py --mode sse --port 8000
 
 # Streamable HTTP mode
 python server.py --mode streamable-http --host 0.0.0.0 --port 8000
+
+# Disable REST API (MCP only)
+python server.py --mode sse --no-api
 ```
 
 Environment variables are also supported:
@@ -52,6 +56,7 @@ Environment variables are also supported:
 | `RAG_EMBEDDING_MODEL` | Embedding model name | `Qwen/Qwen3-Embedding-0.6B` |
 | `RAG_RERANKER_MODEL` | Reranker model name | `BAAI/bge-reranker-v2-m3` |
 | `RAG_DATA_DIR` | Vector data directory | `./data` |
+| `RAG_CORS_ORIGINS` | Allowed CORS origins (comma-separated) | `*` |
 
 ## Client Configuration
 
@@ -150,6 +155,89 @@ Remove a document and all its chunks from the knowledge base.
 | `filepath` | string | (required) | Path used during import |
 | `collection` | string | `"default"` | Collection name |
 
+## REST API
+
+When running in SSE or Streamable HTTP mode, a REST API is automatically available at `/api/` alongside the MCP endpoint. This enables web frontends (e.g., CodingHub) to manage documents via HTTP while AI clients use MCP for search.
+
+Disable with `--no-api` if you only need MCP.
+
+### `GET /api/health`
+
+Health check endpoint.
+
+### `GET /api/collections`
+
+List all knowledge base collections.
+
+**Response:**
+```json
+[{"name": "default", "doc_count": 5}]
+```
+
+### `GET /api/collections/{name}/documents`
+
+List all documents in a collection.
+
+**Response:**
+```json
+[{"source": "/path/to/file.md", "chunk_count": 12}]
+```
+
+### `POST /api/collections/{name}/documents`
+
+Upload a file to the knowledge base. Accepts `multipart/form-data` with a `file` field.
+
+```bash
+curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
+```
+
+Optional query parameter: `chunk_size` (default: 500).
+
+**Response:**
+```json
+{"status": "ok", "filename": "document.pdf", "chunks": 24}
+```
+
+### `DELETE /api/collections/{name}/documents`
+
+Delete a document and all its chunks.
+
+```bash
+curl -X DELETE http://localhost:8000/api/collections/default/documents \
+  -H "Content-Type: application/json" \
+  -d '{"filepath": "/path/to/file.md"}'
+```
+
+**Response:**
+```json
+{"status": "ok", "filepath": "/path/to/file.md", "deleted": 12}
+```
+
+### `POST /api/collections/{name}/search`
+
+Semantic search across the knowledge base.
+
+```bash
+curl -X POST http://localhost:8000/api/collections/default/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how to install", "top_k": 5, "rerank": false}'
+```
+
+**Response:**
+```json
+[
+  {"id": "...", "score": 0.85, "text": "...", "source": "file.md", "chunk_index": 3}
+]
+```
+
+### CORS
+
+The REST API includes CORS headers by default (allows all origins). Restrict with the `RAG_CORS_ORIGINS` environment variable:
+
+```bash
+RAG_CORS_ORIGINS=http://localhost:5173,http://localhost:8080 python server.py --mode sse
+```
+
 ## Architecture
 
 ```mermaid
@@ -186,11 +274,15 @@ flowchart TB
 ```
 wandering-rag-mcp/
 ├── pyproject.toml          # Dependencies and entry point
-├── server.py               # MCP server entry + 6 tool definitions
+├── server.py               # MCP server entry + 6 tool definitions + combined ASGI
+├── api/
+│   ├── __init__.py
+│   └── app.py              # REST API routes (starlette)
 ├── core/
 │   ├── chunker.py          # Recursive text chunking
 │   ├── embeddings.py       # sentence-transformers wrapper (lazy load)
 │   ├── reranker.py         # Cross-encoder reranker (lazy load)
+│   ├── service.py          # Shared business logic (MCP + REST)
 │   └── vector_store.py     # zvec wrapper (CRUD + search)
 ├── data/                   # zvec storage (auto-created at runtime)
 │   └── default/
@@ -213,6 +305,7 @@ wandering-rag-mcp/
 | `zvec` | Embedded vector database by Alibaba |
 | `sentence-transformers` | Load and run embedding models |
 | `markitdown[all]` | Convert PDF/DOCX/PPTX/XLSX to Markdown |
+| `python-multipart` | Multipart form parsing for REST API file uploads |
 
 ## Technical Documentation
 

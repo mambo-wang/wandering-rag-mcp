@@ -109,24 +109,60 @@ embeddings = model.encode(texts, normalize_embeddings=True)
 
 本项目采用**两阶段检索**策略：先用 Bi-Encoder 从 zvec 召回较多候选（如 20 条），再用 Cross-Encoder 精排取 top-5。Reranker 为可选功能，默认关闭，可通过 `search` 工具的 `rerank=true` 参数启用。
 
+### 2.6 REST API：Starlette
+
+在 SSE 和 Streamable HTTP 模式下，服务器同时暴露 REST API（`/api/`），供 Web 前端通过 HTTP 管理文档。REST API 和 MCP 共享同一进程、同一端口、同一份向量数据。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/health` | GET | 健康检查 |
+| `/api/collections` | GET | 列出知识库 |
+| `/api/collections/{name}/documents` | GET | 列出文档 |
+| `/api/collections/{name}/documents` | POST | 上传文件（multipart） |
+| `/api/collections/{name}/documents` | DELETE | 删除文档 |
+| `/api/collections/{name}/search` | POST | 语义搜索 |
+
+REST API 和 MCP 工具调用同一个业务逻辑层（`core/service.py`），确保两套接口的行为完全一致。CORS 通过 `RAG_CORS_ORIGINS` 环境变量配置，默认允许所有来源。
+
+依赖 `python-multipart` 包解析 multipart/form-data 文件上传。starlette 和 uvicorn 作为 `mcp` 包的传递依赖，无需额外安装。
+
 ## 3. 系统架构
 
 ```mermaid
 flowchart TB
-    subgraph Client["MCP Client (QoderWork / Claude Desktop)"]
-        C1["用户提问"] --> C2["调用 search 工具检索"]
-        C2 --> C3["将检索结果作为 context"]
-        C3 --> C4["大模型生成回答"]
+    subgraph Clients["客户端"]
+        direction LR
+        subgraph MCPClient["MCP Client (QoderWork / Claude Desktop)"]
+            C1["用户提问"] --> C2["调用 search 工具检索"]
+            C2 --> C3["将检索结果作为 context"]
+            C3 --> C4["大模型生成回答"]
+        end
+        subgraph WebClient["Web 前端 (CodingHub 等)"]
+            W1["上传/管理文档"] --> W2["调用 REST API"]
+            W2 --> W3["展示搜索结果"]
+        end
     end
 
-    Client <-->|"JSON-RPC (stdio / SSE / Streamable HTTP)"| Entry
+    MCPClient <-->|"JSON-RPC (stdio / SSE / Streamable HTTP)"| Entry
+    WebClient -->|"HTTP (JSON / multipart)"| APIRoutes
 
     subgraph Server["RAG MCP Server"]
         subgraph Entry["server.py (入口层)"]
             E1["@mcp.tool()<br/>search · ingest_file · ingest_directory<br/>list_collections · list_documents · delete_document"]
         end
 
-        Entry --> Ingest & Search
+        subgraph APIRoutes["api/app.py (REST API)"]
+            R1["POST /api/collections/{name}/documents<br/>GET /api/collections<br/>POST /api/collections/{name}/search<br/>..."]
+        end
+
+        Entry --> Svc
+        APIRoutes --> Svc
+
+        subgraph Svc["core/service.py (业务逻辑层)"]
+            SV1["search() · ingest_file() · ingest_content()<br/>delete_document() · list_collections() · list_documents()"]
+        end
+
+        Svc --> Ingest & Search
 
         subgraph Ingest["导入流水线"]
             I1["文件读取"] --> I2{"格式分流"}
@@ -165,9 +201,13 @@ flowchart TB
         end
     end
 
-    style Client fill:#e8f4f8,stroke:#2196F3
+    style Clients fill:#e8f4f8,stroke:#2196F3
+    style MCPClient fill:#e8f4f8,stroke:#2196F3
+    style WebClient fill:#e0f2f1,stroke:#009688
     style Server fill:#f5f5f5,stroke:#333
     style Entry fill:#fff3e0,stroke:#FF9800
+    style APIRoutes fill:#e0f7fa,stroke:#00BCD4
+    style Svc fill:#fff9c4,stroke:#FBC02D
     style Ingest fill:#e8f5e9,stroke:#4CAF50
     style Search fill:#e3f2fd,stroke:#2196F3
     style Core fill:#fce4ec,stroke:#E91E63
@@ -254,6 +294,27 @@ reranker = RerankerService()
 reranked = reranker.rerank(query="如何配置 MCP", candidates=results, top_n=5)
 # reranked 中每条结果新增 rerank_score 字段
 ```
+
+### 4.5 业务逻辑层 (`core/service.py`)
+
+`service.py` 是 MCP 工具和 REST API 共享的业务逻辑层。它拥有 `VectorStore` 单例，暴露返回结构化数据（dict）的操作函数。
+
+**设计动机**：MCP 工具函数需要返回格式化字符串（供 LLM 阅读），而 REST API 需要返回 JSON。将公共逻辑提取到 service 层后，两套接口只需各自做最后一步格式化，避免代码重复。
+
+**核心函数**：
+
+| 函数 | 说明 | 返回类型 |
+|---|---|---|
+| `get_store()` | 获取 VectorStore 单例 | `VectorStore` |
+| `read_file_content(filepath)` | 读取文件内容（文本/二进制） | `(content, error)` |
+| `ingest_file(filepath, collection, chunk_size)` | 导入文件 | `{"status", "filepath", "chunks"}` |
+| `ingest_content(content, filename, collection, chunk_size)` | 导入内容（文件上传场景） | `{"status", "filename", "chunks"}` |
+| `delete_document(filepath, collection)` | 删除文档 | `{"status", "filepath", "deleted"}` |
+| `list_collections()` | 列出知识库 | `[{"name", "doc_count"}]` |
+| `list_documents(collection)` | 列出文档 | `[{"source", "chunk_count"}]` |
+| `search(query, top_k, collection, rerank)` | 语义搜索 | `[{"id", "score", "text", "source"}]` |
+
+`ingest_content()` 是专门为 REST API 文件上传场景设计的——接收已读取的文本内容和文件名，将文件保存到 `data/{collection}/uploads/` 下作为虚拟路径。
 
 ## 5. 数据流
 
@@ -342,10 +403,14 @@ data/
 
 ### 7.2 远程 SSE 模式
 
-启动 HTTP 服务器，客户端通过 SSE 长连接 + HTTP POST 双通道通信。
+启动 HTTP 服务器，客户端通过 SSE 长连接 + HTTP POST 双通道通信。同时自动暴露 REST API 供 Web 前端调用。
 
 ```bash
+# 默认同时启用 MCP + REST API
 python server.py --mode sse --host 0.0.0.0 --port 8000
+
+# 仅 MCP，禁用 REST API
+python server.py --mode sse --host 0.0.0.0 --port 8000 --no-api
 ```
 
 Nginx 反代配置要点：
@@ -359,20 +424,32 @@ location /sse {
 location /messages/ {
     proxy_pass http://127.0.0.1:8000;
 }
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    client_max_body_size 100m;    # 文件上传大小限制
+}
 ```
 
 ### 7.3 远程 Streamable HTTP 模式
 
-单一端点，所有通信走 POST，是 MCP 推荐的新方案。
+单一端点，所有通信走 POST，是 MCP 推荐的新方案。同时自动暴露 REST API。
 
 ```bash
+# 默认同时启用 MCP + REST API
 python server.py --mode streamable-http --host 0.0.0.0 --port 8000
+
+# 仅 MCP，禁用 REST API
+python server.py --mode streamable-http --host 0.0.0.0 --port 8000 --no-api
 ```
 
 ```nginx
 location /mcp {
     proxy_pass http://127.0.0.1:8000;
     proxy_buffering off;
+}
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    client_max_body_size 100m;
 }
 ```
 
@@ -381,18 +458,19 @@ location /mcp {
 ```
 wandering-rag-mcp
 ├── mcp >= 1.0                    # MCP 协议 SDK
-│   ├── starlette                  # ASGI 框架 (SSE/HTTP 模式)
+│   ├── starlette                  # ASGI 框架 (SSE/HTTP 模式 + REST API)
 │   ├── uvicorn                    # ASGI 服务器
 │   └── sse-starlette              # SSE 支持
 ├── zvec >= 0.5.0                 # 嵌入式向量数据库
 ├── sentence-transformers >= 3.0  # 嵌入模型运行时
 │   ├── torch                      # PyTorch
 │   └── transformers               # HuggingFace Transformers
-└── markitdown[all] >= 0.1        # 文档格式转换
-    ├── python-docx                # DOCX 解析
-    ├── python-pptx                # PPTX 解析
-    ├── openpyxl                   # XLSX 解析
-    └── pdfminer.six               # PDF 解析
+├── markitdown[all] >= 0.1        # 文档格式转换
+│   ├── python-docx                # DOCX 解析
+│   ├── python-pptx                # PPTX 解析
+│   ├── openpyxl                   # XLSX 解析
+│   └── pdfminer.six               # PDF 解析
+└── python-multipart >= 0.0.6     # REST API 文件上传解析
 ```
 
 ## 9. 设计决策记录
@@ -408,3 +486,6 @@ wandering-rag-mcp
 | 模型加载 | 懒加载 | 避免 Server 冷启动时加载 ~1.2GB 模型导致的延迟 |
 | Reranker | 可选、默认关闭 | 兼顾速度和精度；Cross-Encoder 推理较慢，不适合作为默认行为 |
 | Reranker 模型 | bge-reranker-v2-m3 | 100+ 语言、中英文双语、与 Qwen3-Embedding 搭配效果良好 |
+| REST API | 同进程同端口 | 无需额外进程/端口，共享向量数据，简化部署；Web 前端和 MCP 客户端可独立使用 |
+| REST 框架 | starlette（直接） | 已是 mcp 的传递依赖，零额外依赖；FastAPI 过重且引入 pydantic 等额外依赖 |
+| 业务逻辑层 | core/service.py | MCP 和 REST 共享逻辑，避免代码重复；各自只做格式化（字符串 vs JSON） |

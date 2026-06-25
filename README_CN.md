@@ -12,6 +12,7 @@
 - **嵌入式向量库**：zvec — 零配置、无需 Docker、WAL 持久化、HNSW 索引
 - **本地嵌入模型**：Qwen3-Embedding-0.6B（0.6B 参数、1024 维、32K 上下文、中英文双语）
 - **可选 Reranker**：bge-reranker-v2-m3 交叉编码器，提升检索精度
+- **REST API**：HTTP 文档管理接口（上传/搜索/删除），与 MCP 共享同一端口
 - **三种传输模式**：stdio、SSE、Streamable HTTP
 - **多知识库隔离**：将文档分隔到不同的 Collection 中独立检索
 
@@ -40,6 +41,9 @@ python server.py --mode sse --port 8000
 
 # Streamable HTTP 模式
 python server.py --mode streamable-http --host 0.0.0.0 --port 8000
+
+# 禁用 REST API（仅 MCP）
+python server.py --mode sse --no-api
 ```
 
 也支持通过环境变量配置：
@@ -52,6 +56,7 @@ python server.py --mode streamable-http --host 0.0.0.0 --port 8000
 | `RAG_EMBEDDING_MODEL` | 嵌入模型名称 | `Qwen/Qwen3-Embedding-0.6B` |
 | `RAG_RERANKER_MODEL` | Reranker 模型名称 | `BAAI/bge-reranker-v2-m3` |
 | `RAG_DATA_DIR` | 向量数据目录 | `./data` |
+| `RAG_CORS_ORIGINS` | 允许的 CORS 来源（逗号分隔） | `*` |
 
 ## 客户端配置
 
@@ -150,6 +155,89 @@ python server.py --mode streamable-http --host 0.0.0.0 --port 8000
 | `filepath` | string | （必填） | 导入时使用的文件路径 |
 | `collection` | string | `"default"` | 知识库名称 |
 
+## REST API
+
+在 SSE 或 Streamable HTTP 模式下，REST API 自动在 `/api/` 路径下可用，与 MCP 端点共享同一端口。Web 前端（如 CodingHub）可通过 HTTP 管理文档，AI 客户端通过 MCP 进行检索。
+
+使用 `--no-api` 可禁用 REST API，仅保留 MCP。
+
+### `GET /api/health`
+
+健康检查端点。
+
+### `GET /api/collections`
+
+列出所有知识库。
+
+**响应：**
+```json
+[{"name": "default", "doc_count": 5}]
+```
+
+### `GET /api/collections/{name}/documents`
+
+列出知识库中的所有文档。
+
+**响应：**
+```json
+[{"source": "/path/to/file.md", "chunk_count": 12}]
+```
+
+### `POST /api/collections/{name}/documents`
+
+上传文件到知识库。接受 `multipart/form-data` 格式，包含 `file` 字段。
+
+```bash
+curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
+```
+
+可选查询参数：`chunk_size`（默认：500）。
+
+**响应：**
+```json
+{"status": "ok", "filename": "document.pdf", "chunks": 24}
+```
+
+### `DELETE /api/collections/{name}/documents`
+
+删除文档及其所有分块。
+
+```bash
+curl -X DELETE http://localhost:8000/api/collections/default/documents \
+  -H "Content-Type: application/json" \
+  -d '{"filepath": "/path/to/file.md"}'
+```
+
+**响应：**
+```json
+{"status": "ok", "filepath": "/path/to/file.md", "deleted": 12}
+```
+
+### `POST /api/collections/{name}/search`
+
+语义搜索知识库。
+
+```bash
+curl -X POST http://localhost:8000/api/collections/default/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "如何安装", "top_k": 5, "rerank": false}'
+```
+
+**响应：**
+```json
+[
+  {"id": "...", "score": 0.85, "text": "...", "source": "file.md", "chunk_index": 3}
+]
+```
+
+### CORS
+
+REST API 默认包含 CORS 头（允许所有来源）。通过 `RAG_CORS_ORIGINS` 环境变量限制允许的来源：
+
+```bash
+RAG_CORS_ORIGINS=http://localhost:5173,http://localhost:8080 python server.py --mode sse
+```
+
 ## 架构
 
 ```mermaid
@@ -186,11 +274,15 @@ flowchart TB
 ```
 wandering-rag-mcp/
 ├── pyproject.toml          # 依赖声明和入口点
-├── server.py               # MCP 服务入口 + 6 个工具定义
+├── server.py               # MCP 服务入口 + 6 个工具定义 + 组合 ASGI
+├── api/
+│   ├── __init__.py
+│   └── app.py              # REST API 路由（starlette）
 ├── core/
 │   ├── chunker.py          # 递归文本分块
 │   ├── embeddings.py       # sentence-transformers 封装（懒加载）
 │   ├── reranker.py         # Cross-Encoder Reranker（懒加载）
+│   ├── service.py          # 共享业务逻辑（MCP + REST）
 │   └── vector_store.py     # zvec 封装（增删查 + 搜索）
 ├── data/                   # zvec 数据存储（运行时自动创建）
 │   └── default/
@@ -213,6 +305,7 @@ wandering-rag-mcp/
 | `zvec` | 阿里巴巴开源嵌入式向量数据库 |
 | `sentence-transformers` | 加载和运行嵌入模型 |
 | `markitdown[all]` | 将 PDF/DOCX/PPTX/XLSX 转换为 Markdown |
+| `python-multipart` | REST API 文件上传的 multipart 表单解析 |
 
 ## 技术文档
 

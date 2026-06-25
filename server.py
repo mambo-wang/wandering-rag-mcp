@@ -3,13 +3,24 @@
 A local RAG (Retrieval-Augmented Generation) knowledge base server
 that uses zvec for vector storage and Qwen3-Embedding for text embedding.
 
-Expose 6 MCP tools for knowledge management:
+Exposes 6 MCP tools for knowledge management and (optionally) a REST API
+for web frontend integration. Both interfaces share the same vector store.
+
+MCP Tools:
   - search: Semantic search across the knowledge base
-  - ingest_file: Import a single text file
-  - ingest_directory: Batch import a directory of text files
+  - ingest_file: Import a single file
+  - ingest_directory: Batch import a directory of files
   - list_collections: List all knowledge base collections
   - list_documents: List documents in a collection
   - delete_document: Remove a document from the knowledge base
+
+REST API (enabled by default in SSE / streamable-http modes):
+  - GET  /api/health
+  - GET  /api/collections
+  - GET  /api/collections/{name}/documents
+  - POST /api/collections/{name}/documents  (multipart file upload)
+  - DELETE /api/collections/{name}/documents
+  - POST /api/collections/{name}/search
 """
 
 import argparse
@@ -23,9 +34,8 @@ from mcp.server.fastmcp import FastMCP
 # Ensure the project root is in the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.chunker import chunk_text, compute_doc_id
-from core.vector_store import VectorStore
-from core.reranker import RerankerService
+from core import service
+from core.chunker import chunk_text
 
 # Configure logging to stderr (stdout is reserved for MCP JSON-RPC)
 logging.basicConfig(
@@ -40,69 +50,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
-# Default text file extensions to process
-DEFAULT_TEXT_EXTENSIONS = {
-    ".md", ".markdown", ".txt", ".text", ".log",
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".kt",
-    ".go", ".rs", ".rb", ".php", ".c", ".cpp", ".h", ".hpp",
-    ".css", ".scss", ".html", ".htm", ".xml", ".yaml", ".yml",
-    ".json", ".toml", ".ini", ".cfg", ".conf",
-    ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
-    ".sql", ".r", ".m", ".swift", ".dart", ".lua",
-    ".csv", ".tsv", ".env",
-}
-
-# Binary document extensions that need markitdown conversion
-BINARY_EXTENSIONS = {
-    ".pdf", ".docx", ".pptx", ".xlsx", ".xls",
-}
-
-# All supported extensions (text + binary)
-ALL_EXTENSIONS = DEFAULT_TEXT_EXTENSIONS | BINARY_EXTENSIONS
-
-# Lazy-initialized markitdown converter
-_markitdown = None
-
-
-def _get_markitdown():
-    """Get or create the MarkItDown converter singleton."""
-    global _markitdown
-    if _markitdown is None:
-        from markitdown import MarkItDown
-        _markitdown = MarkItDown()
-    return _markitdown
-
-
-def _read_file_content(filepath: str) -> tuple[str | None, str | None]:
-    """Read file content, handling both text and binary document formats.
-
-    Returns:
-        (content, error) tuple. One of them is always None.
-        For text files: reads directly with UTF-8.
-        For binary docs (.pdf, .docx, .pptx, .xlsx): uses markitdown to convert.
-    """
-    ext = Path(filepath).suffix.lower()
-
-    if ext in BINARY_EXTENSIONS:
-        try:
-            md = _get_markitdown()
-            result = md.convert(filepath)
-            content = result.text_content if result.text_content else ""
-            if not content.strip():
-                return None, f"Warning: No text extracted from {ext} file: {filepath}"
-            return content, None
-        except Exception as e:
-            return None, f"Error converting {ext} file with markitdown: {e}"
-    else:
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            if not content.strip():
-                return None, f"Warning: File is empty: {filepath}"
-            return content, None
-        except Exception as e:
-            return None, f"Error reading file: {e}"
-
 # Parse CLI arguments early (before FastMCP creation)
 _parser = argparse.ArgumentParser(
     description="RAG Knowledge Base MCP Server",
@@ -110,9 +57,9 @@ _parser = argparse.ArgumentParser(
     epilog="""
 Examples:
   python server.py                          # stdio mode (default, for QoderWork/Claude Desktop)
-  python server.py --mode sse               # SSE mode on 127.0.0.1:8000
-  python server.py --mode sse --port 9000   # SSE mode on custom port
-  python server.py --mode streamable-http --host 0.0.0.0  # Streamable HTTP, bind all interfaces
+  python server.py --mode sse               # SSE + REST API on 127.0.0.1:8000
+  python server.py --mode sse --no-api      # SSE only, no REST API
+  python server.py --mode streamable-http --host 0.0.0.0  # Streamable HTTP + REST API
 """,
 )
 _parser.add_argument(
@@ -132,6 +79,12 @@ _parser.add_argument(
     default=int(os.getenv("RAG_MCP_PORT", "8000")),
     help="Port to bind (default: 8000, env: RAG_MCP_PORT)",
 )
+_parser.add_argument(
+    "--api",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Enable REST API alongside MCP (default: enabled in SSE/streamable-http modes)",
+)
 _args = _parser.parse_args()
 
 # Initialize MCP server
@@ -146,16 +99,8 @@ mcp = FastMCP(
     port=_args.port,
 )
 
-# Lazy-initialized vector store
-_store: VectorStore | None = None
 
-
-def get_store() -> VectorStore:
-    """Get or create the VectorStore singleton."""
-    global _store
-    if _store is None:
-        _store = VectorStore()
-    return _store
+# ── MCP Tools ────────────────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -175,40 +120,22 @@ def search(
         top_k: Number of results to return (default: 5).
         collection: Knowledge base collection to search (default: "default").
         rerank: If True, use a cross-encoder reranker model to improve
-            result relevance. Fetches more candidates from vector search
-            then reranks them. Slightly slower but more accurate (default: False).
+            result relevance. Slightly slower but more accurate (default: False).
     """
-    store = get_store()
-
-    # When reranking, fetch more candidates for the reranker to choose from
-    if rerank:
-        fetch_k = max(top_k * 3, 20)
-    else:
-        fetch_k = top_k
-
-    try:
-        results = store.search(query, top_k=fetch_k, collection=collection)
-    except Exception as e:
-        return f"Search failed: {e}"
+    results = service.search(
+        query=query, top_k=top_k, collection=collection, rerank=rerank,
+    )
 
     if not results:
         return "No relevant documents found in the knowledge base."
 
-    # Apply reranking if requested
-    if rerank and len(results) > 1:
-        reranker = RerankerService()
-        results = reranker.rerank(query, results, top_n=top_k)
-        score_key = "rerank_score"
-    else:
-        score_key = "score"
-
     output_parts = [f"Found {len(results)} relevant chunks:\n"]
     for i, r in enumerate(results, 1):
-        score_val = r.get(score_key, r.get("score", 0))
+        score_val = r.get("rerank_score", r.get("score", 0))
         score_pct = f"{score_val * 100:.1f}%"
         source = r.get("source", "unknown")
         text = r.get("text", "")
-        label = "rerank" if rerank else "vector"
+        label = "rerank" if rerank and "rerank_score" in r else "vector"
         output_parts.append(
             f"--- Result {i} ({label} score: {score_pct}, source: {source}) ---\n{text}\n"
         )
@@ -233,31 +160,12 @@ def ingest_file(
         collection: Target knowledge base collection (default: "default").
         chunk_size: Maximum characters per chunk (default: 500).
     """
-    filepath = os.path.abspath(filepath)
-
-    if not os.path.isfile(filepath):
-        return f"Error: File not found: {filepath}"
-
-    content, error = _read_file_content(filepath)
-    if error:
-        return error
-
-    # Delete existing chunks for this file (idempotent re-import)
-    store = get_store()
-    store.delete_document(filepath, collection=collection)
-
-    # Chunk the text
-    chunks = chunk_text(content, filepath=filepath, chunk_size=chunk_size)
-    if not chunks:
-        return f"Warning: No chunks could be created from: {filepath}"
-
-    # Insert into vector store
-    count = store.ingest_chunks(chunks, collection=collection)
-    store.register_document(filepath, chunk_count=count, collection=collection)
-
+    result = service.ingest_file(filepath, collection=collection, chunk_size=chunk_size)
+    if result["status"] == "error":
+        return f"Error: {result['error']}"
     return (
-        f"Successfully imported '{filepath}' into collection '{collection}': "
-        f"{count} chunks indexed."
+        f"Successfully imported '{result['filepath']}' into collection "
+        f"'{collection}': {result['chunks']} chunks indexed."
     )
 
 
@@ -290,16 +198,14 @@ def ingest_directory(
     # Parse extensions
     if extensions.strip():
         ext_set = {e.strip().lower() for e in extensions.split(",")}
-        # Ensure they start with a dot
         ext_set = {e if e.startswith(".") else f".{e}" for e in ext_set}
     else:
-        ext_set = ALL_EXTENSIONS
+        ext_set = service.ALL_EXTENSIONS
 
     # Find files
     files = []
     if recursive:
         for root, dirs, filenames in os.walk(dirpath):
-            # Skip hidden directories and common non-text dirs
             dirs[:] = [d for d in dirs if not d.startswith(".") and d not in {
                 "node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build",
             }]
@@ -315,15 +221,15 @@ def ingest_directory(
     if not files:
         return f"No matching files found in: {dirpath}"
 
-    # Import each file
+    # Import each file via service layer
     success = 0
     failed = 0
     total_chunks = 0
-    store = get_store()
+    store = service.get_store()
 
     for fpath in files:
         try:
-            content, error = _read_file_content(fpath)
+            content, error = service.read_file_content(fpath)
             if error:
                 logger.warning(error)
                 failed += 1
@@ -343,7 +249,7 @@ def ingest_directory(
             failed += 1
 
     return (
-        f"Batch import complete for '{dirpath}' → collection '{collection}':\n"
+        f"Batch import complete for '{dirpath}' \u2192 collection '{collection}':\n"
         f"  Files processed: {success} succeeded, {failed} failed\n"
         f"  Total chunks indexed: {total_chunks}"
     )
@@ -355,17 +261,14 @@ def list_collections() -> str:
 
     Returns the names of all collections that have been created.
     """
-    store = get_store()
-    collections = store.list_collections()
+    collections = service.list_collections()
 
     if not collections:
         return "No collections found. Use ingest_file or ingest_directory to create one."
 
     lines = [f"Found {len(collections)} collection(s):\n"]
-    for name in collections:
-        docs = store.list_documents(collection=name)
-        doc_count = len(docs)
-        lines.append(f"  - {name} ({doc_count} documents)")
+    for c in collections:
+        lines.append(f"  - {c['name']} ({c['doc_count']} documents)")
 
     return "\n".join(lines)
 
@@ -377,8 +280,7 @@ def list_documents(collection: str = "default") -> str:
     Args:
         collection: Collection name to list (default: "default").
     """
-    store = get_store()
-    docs = store.list_documents(collection=collection)
+    docs = service.list_documents(collection=collection)
 
     if not docs:
         return f"No documents found in collection '{collection}'."
@@ -403,9 +305,8 @@ def delete_document(
         filepath: Path of the document to delete (should match the path used during import).
         collection: Collection name (default: "default").
     """
-    store = get_store()
-    deleted = store.delete_document(filepath, collection=collection)
-    store.unregister_document(filepath, collection=collection)
+    result = service.delete_document(filepath, collection=collection)
+    deleted = result["deleted"]
 
     if deleted > 0:
         return (
@@ -416,23 +317,96 @@ def delete_document(
         return f"No chunks found for '{filepath}' in collection '{collection}'."
 
 
+# ── Combined ASGI Application ────────────────────────────────────────────────
+
+
+def _create_combined_app():
+    """Create a combined ASGI app with REST API + MCP on the same port.
+
+    Routes:
+        /api/*   -> REST API (JSON)
+        /mcp     -> MCP Streamable HTTP
+        /sse     -> MCP SSE
+        /messages/ -> MCP SSE message endpoint
+    """
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+
+    from api.app import create_api_routes, get_cors_middleware
+
+    # Get the MCP ASGI app (Starlette instance)
+    if _args.mode == "sse":
+        mcp_app = mcp.sse_app()
+    else:
+        mcp_app = mcp.streamable_http_app()
+
+    # Build combined route list: API routes first, then MCP routes
+    routes = list(create_api_routes()) + list(mcp_app.routes)
+
+    # CORS middleware for web frontend access
+    middleware = [get_cors_middleware()]
+
+    # Use MCP app's lifespan (needed for streamable-http session manager)
+    combined = Starlette(
+        routes=routes,
+        middleware=middleware,
+        lifespan=mcp_app.router.lifespan_context,
+    )
+
+    return combined
+
+
+# ── Entry Point ──────────────────────────────────────────────────────────────
+
+
 def main():
     """Entry point for the MCP server."""
     mode = _args.mode
+
     if mode == "stdio":
         mcp.run(transport="stdio")
-    elif mode == "sse":
-        logger.info(
-            f"Starting wandering-rag-mcp in SSE mode: "
-            f"http://{_args.host}:{_args.port}/sse"
-        )
-        mcp.run(transport="sse")
-    elif mode == "streamable-http":
-        logger.info(
-            f"Starting wandering-rag-mcp in Streamable HTTP mode: "
-            f"http://{_args.host}:{_args.port}/mcp"
-        )
-        mcp.run(transport="streamable-http")
+
+    elif mode in ("sse", "streamable-http"):
+        if _args.api:
+            # Combined mode: REST API + MCP on the same port
+            import uvicorn
+
+            app = _create_combined_app()
+
+            if mode == "sse":
+                logger.info(
+                    f"Starting wandering-rag-mcp in SSE mode: "
+                    f"http://{_args.host}:{_args.port}/sse"
+                )
+                logger.info(
+                    f"REST API available at: "
+                    f"http://{_args.host}:{_args.port}/api/"
+                )
+            else:
+                logger.info(
+                    f"Starting wandering-rag-mcp in Streamable HTTP mode: "
+                    f"http://{_args.host}:{_args.port}/mcp"
+                )
+                logger.info(
+                    f"REST API available at: "
+                    f"http://{_args.host}:{_args.port}/api/"
+                )
+
+            uvicorn.run(app, host=_args.host, port=_args.port)
+        else:
+            # MCP-only mode (no REST API)
+            if mode == "sse":
+                logger.info(
+                    f"Starting wandering-rag-mcp in SSE mode: "
+                    f"http://{_args.host}:{_args.port}/sse"
+                )
+            else:
+                logger.info(
+                    f"Starting wandering-rag-mcp in Streamable HTTP mode: "
+                    f"http://{_args.host}:{_args.port}/mcp"
+                )
+            mcp.run(transport=mode)
 
 
 if __name__ == "__main__":

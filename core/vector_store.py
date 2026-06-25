@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -40,25 +41,56 @@ class VectorStore:
         os.makedirs(data_dir, exist_ok=True)
 
     def _collection_path(self, name: str) -> str:
+        """Return the base directory for a collection (metadata, registry)."""
         return os.path.join(self.data_dir, name)
+
+    def _zvec_path(self, name: str) -> str:
+        """Return the zvec data directory for a collection.
+
+        Uses a 'db' subdirectory to avoid conflicts with uploads and
+        registry files that live at the collection root.
+        Falls back to the collection root for backward compatibility
+        with existing installations that stored zvec data directly there.
+        """
+        db_path = os.path.join(self._collection_path(name), "db")
+        if os.path.exists(db_path):
+            return db_path
+
+        # Backward compat: legacy layout stored zvec data directly in data/{name}/
+        base = self._collection_path(name)
+        if os.path.isdir(base) and os.path.exists(os.path.join(base, "manifest.0")):
+            return base
+
+        return db_path
 
     def _get_or_create_collection(self, name: str) -> zvec.Collection:
         """Open an existing collection or create a new one."""
         if name in self._collections:
             return self._collections[name]
 
-        path = self._collection_path(name)
+        zvec_dir = self._zvec_path(name)
 
-        if os.path.exists(path) and os.path.isdir(path):
-            # Check if it's an existing zvec collection
-            # zvec stores internal files in the directory
+        if os.path.exists(zvec_dir) and os.path.isdir(zvec_dir):
             try:
-                coll = zvec.open(path)
+                coll = zvec.open(zvec_dir)
                 self._collections[name] = coll
                 logger.info(f"Opened existing collection: {name}")
                 return coll
-            except Exception:
-                logger.warning(f"Failed to open collection at {path}, will recreate")
+            except Exception as open_err:
+                logger.warning(f"Failed to open collection at {zvec_dir}: {open_err}")
+                # Remove the corrupted/stale directory and recreate
+                try:
+                    shutil.rmtree(zvec_dir)
+                    logger.info(f"Removed stale collection directory: {zvec_dir}")
+                except Exception as rm_err:
+                    logger.error(f"Failed to remove stale collection: {rm_err}")
+                    raise RuntimeError(
+                        f"Cannot open or recreate collection '{name}': "
+                        f"open failed ({open_err}), cleanup failed ({rm_err})"
+                    ) from rm_err
+
+        # Ensure the parent directory exists
+        os.makedirs(os.path.dirname(zvec_dir), exist_ok=True)
 
         # Create new collection
         dimension = self.embedding_service.dimension
@@ -75,7 +107,7 @@ class VectorStore:
                 dimension,
             ),
         )
-        coll = zvec.create_and_open(path, schema=schema)
+        coll = zvec.create_and_open(zvec_dir, schema=schema)
         self._collections[name] = coll
         logger.info(f"Created new collection: {name} (dim={dimension})")
         return coll
@@ -209,6 +241,8 @@ class VectorStore:
             return []
         collections = []
         for entry in sorted(os.listdir(self.data_dir)):
+            if entry.startswith("_") or entry.startswith("."):
+                continue  # skip internal directories (_uploads, .git, etc.)
             path = os.path.join(self.data_dir, entry)
             if os.path.isdir(path):
                 collections.append(entry)
