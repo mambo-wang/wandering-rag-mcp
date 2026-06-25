@@ -35,7 +35,6 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core import service
-from core.chunker import chunk_text
 
 # Configure logging to stderr (stdout is reserved for MCP JSON-RPC)
 logging.basicConfig(
@@ -109,6 +108,7 @@ def search(
     top_k: int = 5,
     collection: str = "default",
     rerank: bool = False,
+    filter: str = "",
 ) -> str:
     """Search the knowledge base for relevant document chunks.
 
@@ -121,15 +121,22 @@ def search(
         collection: Knowledge base collection to search (default: "default").
         rerank: If True, use a cross-encoder reranker model to improve
             result relevance. Slightly slower but more accurate (default: False).
+        filter: Glob pattern to filter by source file path, e.g. "*.md",
+            "**/docs/*", "README*". Leave empty to search all documents (default: "").
     """
     results = service.search(
-        query=query, top_k=top_k, collection=collection, rerank=rerank,
+        query=query, top_k=top_k, collection=collection,
+        rerank=rerank, filter=filter,
     )
 
     if not results:
+        if filter:
+            return f"No relevant documents found matching '{filter}' in the knowledge base."
         return "No relevant documents found in the knowledge base."
 
     output_parts = [f"Found {len(results)} relevant chunks:\n"]
+    if filter:
+        output_parts[0] = f"Found {len(results)} relevant chunks (filter: {filter}):\n"
     for i, r in enumerate(results, 1):
         score_val = r.get("rerank_score", r.get("score", 0))
         score_pct = f"{score_val * 100:.1f}%"
@@ -148,6 +155,7 @@ def ingest_file(
     filepath: str,
     collection: str = "default",
     chunk_size: int = 500,
+    force: bool = False,
 ) -> str:
     """Import a file into the knowledge base.
 
@@ -159,8 +167,16 @@ def ingest_file(
         filepath: Absolute or relative path to the file to import.
         collection: Target knowledge base collection (default: "default").
         chunk_size: Maximum characters per chunk (default: 500).
+        force: If True, re-import even if file content hasn't changed
+            since last import (default: False).
     """
-    result = service.ingest_file(filepath, collection=collection, chunk_size=chunk_size)
+    result = service.ingest_file(filepath, collection=collection,
+                                  chunk_size=chunk_size, force=force)
+    if result["status"] == "skipped":
+        return (
+            f"Skipped '{result['filepath']}': file unchanged since last import. "
+            f"Use force=True to re-import anyway."
+        )
     if result["status"] == "error":
         return f"Error: {result['error']}"
     return (
@@ -176,6 +192,7 @@ def ingest_directory(
     recursive: bool = True,
     extensions: str = "",
     chunk_size: int = 500,
+    force: bool = False,
 ) -> str:
     """Batch import all files in a directory into the knowledge base.
 
@@ -189,6 +206,8 @@ def ingest_directory(
         extensions: Comma-separated file extensions to include, e.g. ".md,.txt,.pdf".
             Leave empty to use the default set (text files + pdf/docx/pptx/xlsx).
         chunk_size: Maximum characters per chunk (default: 500).
+        force: If True, re-import files even if they haven't changed
+            since last import (default: False).
     """
     dirpath = os.path.abspath(dirpath)
 
@@ -221,36 +240,27 @@ def ingest_directory(
     if not files:
         return f"No matching files found in: {dirpath}"
 
-    # Import each file via service layer
+    # Import each file via service layer (leverages change detection)
     success = 0
+    skipped = 0
     failed = 0
     total_chunks = 0
-    store = service.get_store()
 
     for fpath in files:
-        try:
-            content, error = service.read_file_content(fpath)
-            if error:
-                logger.warning(error)
-                failed += 1
-                continue
-
-            # Delete existing chunks (idempotent)
-            store.delete_document(fpath, collection=collection)
-
-            chunks = chunk_text(content, filepath=fpath, chunk_size=chunk_size)
-            if chunks:
-                count = store.ingest_chunks(chunks, collection=collection)
-                store.register_document(fpath, chunk_count=count, collection=collection)
-                total_chunks += count
-                success += 1
-        except Exception as e:
-            logger.error(f"Failed to ingest {fpath}: {e}")
+        result = service.ingest_file(fpath, collection=collection,
+                                      chunk_size=chunk_size, force=force)
+        if result["status"] == "ok":
+            total_chunks += result["chunks"]
+            success += 1
+        elif result["status"] == "skipped":
+            skipped += 1
+        else:
+            logger.warning(result.get("error", f"Unknown error for {fpath}"))
             failed += 1
 
     return (
         f"Batch import complete for '{dirpath}' \u2192 collection '{collection}':\n"
-        f"  Files processed: {success} succeeded, {failed} failed\n"
+        f"  Files: {success} imported, {skipped} unchanged (skipped), {failed} failed\n"
         f"  Total chunks indexed: {total_chunks}"
     )
 

@@ -109,6 +109,7 @@ Search the knowledge base with natural language queries.
 | `top_k` | int | 5 | Number of results to return |
 | `collection` | string | `"default"` | Collection to search |
 | `rerank` | bool | `false` | Use cross-encoder reranker for higher accuracy |
+| `filter` | string | `""` | Glob pattern to filter by source file (e.g. `*.md`, `**/docs/*`) |
 
 ### `ingest_file`
 
@@ -119,6 +120,9 @@ Import a single file into the knowledge base.
 | `filepath` | string | (required) | Path to the file |
 | `collection` | string | `"default"` | Target collection |
 | `chunk_size` | int | 500 | Max characters per chunk |
+| `force` | bool | `false` | Re-import even if file hasn't changed |
+
+> **Change detection**: By default, files that haven't changed since last import are skipped. Use `force=true` to re-import anyway.
 
 Supported formats: `.md`, `.txt`, `.py`, `.js`, `.ts`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, and 40+ more.
 
@@ -133,6 +137,7 @@ Batch import all files in a directory.
 | `recursive` | bool | `true` | Scan subdirectories |
 | `extensions` | string | `""` | Comma-separated extensions filter (empty = all supported) |
 | `chunk_size` | int | 500 | Max characters per chunk |
+| `force` | bool | `false` | Re-import even if files haven't changed |
 
 ### `list_collections`
 
@@ -220,8 +225,16 @@ Semantic search across the knowledge base.
 ```bash
 curl -X POST http://localhost:8000/api/collections/default/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "how to install", "top_k": 5, "rerank": false}'
+  -d '{"query": "how to install", "top_k": 5, "rerank": false, "filter": "*.md"}'
 ```
+
+**Request body:**
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `query` | string | (required) | Search query |
+| `top_k` | int | 5 | Number of results |
+| `rerank` | bool | `false` | Use cross-encoder reranker |
+| `filter` | string | `""` | Glob pattern to filter by source file path |
 
 **Response:**
 ```json

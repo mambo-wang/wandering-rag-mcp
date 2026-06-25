@@ -109,6 +109,7 @@ python server.py --mode sse --no-api
 | `top_k` | int | 5 | 返回结果数量 |
 | `collection` | string | `"default"` | 搜索的知识库 |
 | `rerank` | bool | `false` | 启用交叉编码器 Reranker 提升精度 |
+| `filter` | string | `""` | Glob 模式按源文件过滤（如 `*.md`、`**/docs/*`） |
 
 ### `ingest_file` — 导入文件
 
@@ -119,6 +120,9 @@ python server.py --mode sse --no-api
 | `filepath` | string | （必填） | 文件路径 |
 | `collection` | string | `"default"` | 目标知识库 |
 | `chunk_size` | int | 500 | 每块最大字符数 |
+| `force` | bool | `false` | 即使文件未变更也重新导入 |
+
+> **变更检测**：默认情况下，自上次导入以来未变更的文件会被跳过。使用 `force=true` 强制重新导入。
 
 支持格式：`.md`、`.txt`、`.py`、`.js`、`.ts`、`.pdf`、`.docx`、`.pptx`、`.xlsx` 等 40+ 种。
 
@@ -133,6 +137,7 @@ python server.py --mode sse --no-api
 | `recursive` | bool | `true` | 是否扫描子目录 |
 | `extensions` | string | `""` | 逗号分隔的扩展名过滤（空=全部支持格式） |
 | `chunk_size` | int | 500 | 每块最大字符数 |
+| `force` | bool | `false` | 即使文件未变更也重新导入 |
 
 ### `list_collections` — 列出知识库
 
@@ -220,8 +225,16 @@ curl -X DELETE http://localhost:8000/api/collections/default/documents \
 ```bash
 curl -X POST http://localhost:8000/api/collections/default/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "如何安装", "top_k": 5, "rerank": false}'
+  -d '{"query": "如何安装", "top_k": 5, "rerank": false, "filter": "*.md"}'
 ```
+
+**请求体：**
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `query` | string | （必填） | 搜索查询 |
+| `top_k` | int | 5 | 返回结果数量 |
+| `rerank` | bool | `false` | 启用交叉编码器 Reranker |
+| `filter` | string | `""` | Glob 模式按源文件路径过滤 |
 
 **响应：**
 ```json

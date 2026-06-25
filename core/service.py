@@ -5,6 +5,8 @@ operations (returning dicts) that both the MCP tools and the HTTP
 API can consume.
 """
 
+import fnmatch
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -85,23 +87,66 @@ def read_file_content(filepath: str) -> tuple[str | None, str | None]:
             return None, f"Error reading file: {e}"
 
 
+# ── File hashing ─────────────────────────────────────────────
+
+def _compute_file_hash(filepath: str) -> str:
+    """Compute SHA256 hash of file content for change detection."""
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _get_registry_hash(filepath: str, collection: str) -> str | None:
+    """Read the stored file_hash from the registry, or None if not found."""
+    store = get_store()
+    registry_path = os.path.join(store._collection_path(collection), "_registry.json")
+    if not os.path.exists(registry_path):
+        return None
+    try:
+        import json
+        with open(registry_path, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+        abs_path = os.path.normpath(os.path.abspath(filepath))
+        return registry.get(abs_path, {}).get("file_hash")
+    except Exception:
+        return None
+
+
 # ── Operations ───────────────────────────────────────────────
 
 def ingest_file(
     filepath: str,
     collection: str = "default",
     chunk_size: int = 500,
+    force: bool = False,
 ) -> dict:
     """Import a single file into the knowledge base.
 
+    Args:
+        filepath: Path to the file.
+        collection: Target collection.
+        chunk_size: Max characters per chunk.
+        force: If True, re-import even if file hasn't changed.
+
     Returns:
         {"status": "ok", "filepath": str, "chunks": int}
+        {"status": "skipped", "filepath": str, "reason": "unchanged"}
         or {"status": "error", "error": str}
     """
     filepath = os.path.abspath(filepath)
 
     if not os.path.isfile(filepath):
         return {"status": "error", "error": f"File not found: {filepath}"}
+
+    # Change detection: skip if file hasn't changed
+    current_hash = _compute_file_hash(filepath)
+    if not force:
+        stored_hash = _get_registry_hash(filepath, collection)
+        if stored_hash and stored_hash == current_hash:
+            logger.info(f"Skipping unchanged file: {filepath}")
+            return {"status": "skipped", "filepath": filepath, "reason": "unchanged"}
 
     content, error = read_file_content(filepath)
     if error:
@@ -116,7 +161,8 @@ def ingest_file(
         return {"status": "error", "error": f"No chunks created from: {filepath}"}
 
     count = store.ingest_chunks(chunks, collection=collection)
-    store.register_document(filepath, chunk_count=count, collection=collection)
+    store.register_document(filepath, chunk_count=count, collection=collection,
+                            file_hash=current_hash)
 
     return {"status": "ok", "filepath": filepath, "chunks": count}
 
@@ -206,8 +252,17 @@ def search(
     top_k: int = 5,
     collection: str = "default",
     rerank: bool = False,
+    filter: str = "",
 ) -> list[dict]:
     """Search the knowledge base.
+
+    Args:
+        query: Search query string.
+        top_k: Number of results to return.
+        collection: Collection to search.
+        rerank: Whether to apply cross-encoder reranking.
+        filter: Glob pattern to filter by source file path (e.g. "*.md", "**/docs/*").
+            Empty string means no filtering.
 
     Returns:
         List of result dicts with keys:
@@ -218,17 +273,29 @@ def search(
 
     store = get_store()
 
-    # When reranking, fetch more candidates
-    fetch_k = max(top_k * 3, 20) if rerank else top_k
+    # Fetch more candidates when filtering or reranking
+    if filter or rerank:
+        fetch_k = max(top_k * 5, 20)
+    else:
+        fetch_k = top_k
 
     results = store.search(query, top_k=fetch_k, collection=collection)
 
     if not results:
         return []
 
+    # Apply source path filter (glob pattern)
+    if filter:
+        results = [
+            r for r in results
+            if fnmatch.fnmatch(r.get("source", ""), filter)
+        ]
+
     # Apply reranking if requested
     if rerank and len(results) > 1:
         reranker = RerankerService()
         results = reranker.rerank(query, results, top_n=top_k)
+    else:
+        results = results[:top_k]
 
     return results

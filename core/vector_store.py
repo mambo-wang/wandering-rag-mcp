@@ -282,8 +282,16 @@ class VectorStore:
         filepath: str,
         chunk_count: int,
         collection: str = "default",
+        file_hash: str = "",
     ):
-        """Register a document in the collection's document registry."""
+        """Register a document in the collection's document registry.
+
+        Args:
+            filepath: Path to the document.
+            chunk_count: Number of chunks indexed.
+            collection: Collection name.
+            file_hash: SHA256 hash of file content for change detection.
+        """
         coll_path = self._collection_path(collection)
         os.makedirs(coll_path, exist_ok=True)
         registry_path = os.path.join(coll_path, "_registry.json")
@@ -298,6 +306,8 @@ class VectorStore:
             "chunk_count": chunk_count,
             "doc_id": __import__("core.chunker", fromlist=["compute_doc_id"]).compute_doc_id(filepath),
         }
+        if file_hash:
+            registry[abs_path]["file_hash"] = file_hash
 
         with open(registry_path, "w", encoding="utf-8") as f:
             json.dump(registry, f, ensure_ascii=False, indent=2)

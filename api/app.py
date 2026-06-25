@@ -146,7 +146,7 @@ async def delete_document(request: Request):
 async def search_documents(request: Request):
     """POST /api/collections/{name}/search — semantic search.
 
-    Expects JSON body: {"query": "...", "top_k": 5, "rerank": false}
+    Expects JSON body: {"query": "...", "top_k": 5, "rerank": false, "filter": "*.md"}
     """
     collection = _get_collection(request)
 
@@ -161,11 +161,13 @@ async def search_documents(request: Request):
 
     top_k = int(body.get("top_k", 5))
     rerank = bool(body.get("rerank", False))
+    filter_pattern = body.get("filter", "")
 
     try:
         results = service.search(
             query=query, top_k=top_k,
             collection=collection, rerank=rerank,
+            filter=filter_pattern,
         )
         return _json(results)
     except Exception as e:
