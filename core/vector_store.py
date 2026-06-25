@@ -20,6 +20,15 @@ DEFAULT_DATA_DIR = os.getenv(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"),
 )
 
+# Default configuration for each collection (stored per-collection in _config.json)
+DEFAULT_COLLECTION_CONFIG = {
+    "chunk_mode": "recursive",
+    "chunk_size": 500,
+    "chunk_overlap": 50,
+    "rerank": False,
+    "description": "",
+}
+
 
 class VectorStore:
     """Manages zvec collections for RAG vector storage and retrieval.
@@ -328,3 +337,50 @@ class VectorStore:
 
         with open(registry_path, "w", encoding="utf-8") as f:
             json.dump(registry, f, ensure_ascii=False, indent=2)
+
+    # ── Collection Configuration ─────────────────────────────────
+
+    def get_collection_config(self, name: str) -> dict:
+        """Read collection config, returning defaults for missing fields.
+
+        Returns:
+            Dict with keys: chunk_mode, chunk_size, chunk_overlap, rerank, description.
+        """
+        config_path = os.path.join(self._collection_path(name), "_config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    stored = json.load(f)
+                # Merge: stored values override defaults, unknown keys ignored
+                result = dict(DEFAULT_COLLECTION_CONFIG)
+                for k in DEFAULT_COLLECTION_CONFIG:
+                    if k in stored:
+                        result[k] = stored[k]
+                return result
+            except Exception as e:
+                logger.warning(f"Failed to read config for '{name}': {e}")
+        return dict(DEFAULT_COLLECTION_CONFIG)
+
+    def set_collection_config(self, name: str, config: dict) -> dict:
+        """Write collection config (only known fields are saved).
+
+        Args:
+            name: Collection name.
+            config: Dict of config values to set. Only keys present in
+                DEFAULT_COLLECTION_CONFIG are accepted; unknown keys are ignored.
+
+        Returns:
+            The full saved config (merged with existing values).
+        """
+        current = self.get_collection_config(name)
+        for k in DEFAULT_COLLECTION_CONFIG:
+            if k in config:
+                current[k] = config[k]
+
+        config_path = os.path.join(self._collection_path(name), "_config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Saved config for collection '{name}'")
+        return current

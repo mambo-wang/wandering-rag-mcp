@@ -162,6 +162,27 @@ python server.py --mode sse --no-api
 | `filepath` | string | （必填） | 导入时使用的文件路径 |
 | `collection` | string | `"default"` | 知识库名称 |
 
+### `configure_collection` — 配置知识库
+
+设置知识库的默认参数。后续导入和搜索操作如果不显式指定参数，将自动使用这些配置。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `collection` | string | `"default"` | 知识库名称 |
+| `chunk_mode` | string | `""` | 默认分块策略，空=保持不变。`recursive` 或 `semantic` |
+| `chunk_size` | int | `0` | 默认每块最大字符数，0=保持不变 |
+| `chunk_overlap` | int | `-1` | 默认重叠字符数，-1=保持不变 |
+| `rerank` | bool | `None` | 搜索时是否默认启用 Reranker，None=保持不变 |
+| `description` | string | `None` | 知识库描述，None=保持不变 |
+
+### `get_collection_config` — 查看知识库配置
+
+查看知识库的当前配置参数。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `collection` | string | `"default"` | 知识库名称 |
+
 ## REST API
 
 在 SSE 或 Streamable HTTP 模式下，REST API 自动在 `/api/` 路径下可用，与 MCP 端点共享同一端口。Web 前端（如 CodingHub）可通过 HTTP 管理文档，AI 客户端通过 MCP 进行检索。
@@ -244,6 +265,27 @@ curl -X POST http://localhost:8000/api/collections/default/search \
   {"id": "...", "score": 0.85, "text": "...", "source": "file.md", "chunk_index": 3}
 ]
 ```
+
+### `GET /api/collections/{name}/config`
+
+获取知识库配置。
+
+**响应：**
+```json
+{"chunk_mode": "semantic", "chunk_size": 500, "chunk_overlap": 50, "rerank": false, "description": "技术文档"}
+```
+
+### `PUT /api/collections/{name}/config`
+
+更新知识库配置。只需传入要修改的字段。
+
+```bash
+curl -X PUT http://localhost:8000/api/collections/default/config \
+  -H "Content-Type: application/json" \
+  -d '{"chunk_mode": "semantic", "description": "技术文档知识库"}'
+```
+
+**响应：** 返回完整的更新后配置。
 
 ### CORS
 

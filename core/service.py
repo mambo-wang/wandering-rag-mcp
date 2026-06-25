@@ -114,30 +114,50 @@ def _get_registry_hash(filepath: str, collection: str) -> str | None:
         return None
 
 
+# ── Config resolution ────────────────────────────────────────
+
+def _resolve_config(collection: str, **overrides) -> dict:
+    """Resolve final config: explicit params > collection config > defaults.
+
+    Only overrides with non-None values take effect.
+    """
+    store = get_store()
+    config = store.get_collection_config(collection)
+    for key, value in overrides.items():
+        if value is not None:
+            config[key] = value
+    return config
+
+
 # ── Operations ───────────────────────────────────────────────
 
 def ingest_file(
     filepath: str,
     collection: str = "default",
-    chunk_size: int = 500,
+    chunk_size: int | None = None,
     force: bool = False,
-    chunk_mode: str = "recursive",
+    chunk_mode: str | None = None,
 ) -> dict:
     """Import a single file into the knowledge base.
 
     Args:
         filepath: Path to the file.
         collection: Target collection.
-        chunk_size: Max characters per chunk.
+        chunk_size: Max characters per chunk. None = use collection config.
         force: If True, re-import even if file hasn't changed.
-        chunk_mode: Chunking strategy - "recursive" (character-based) or
-            "semantic" (embedding similarity-based).
+        chunk_mode: Chunking strategy - "recursive" or "semantic".
+            None = use collection config.
 
     Returns:
         {"status": "ok", "filepath": str, "chunks": int}
         {"status": "skipped", "filepath": str, "reason": "unchanged"}
         or {"status": "error", "error": str}
     """
+    config = _resolve_config(collection, chunk_size=chunk_size,
+                             chunk_mode=chunk_mode)
+    chunk_size = config["chunk_size"]
+    chunk_mode = config["chunk_mode"]
+
     filepath = os.path.abspath(filepath)
 
     if not os.path.isfile(filepath):
@@ -178,8 +198,8 @@ def ingest_content(
     content: str,
     filename: str,
     collection: str = "default",
-    chunk_size: int = 500,
-    chunk_mode: str = "recursive",
+    chunk_size: int | None = None,
+    chunk_mode: str | None = None,
 ) -> dict:
     """Import text content (from file upload) into the knowledge base.
 
@@ -187,13 +207,19 @@ def ingest_content(
         content: The text content to ingest.
         filename: Original filename (used for doc_id and source tracking).
         collection: Target collection.
-        chunk_size: Max characters per chunk.
+        chunk_size: Max characters per chunk. None = use collection config.
         chunk_mode: Chunking strategy - "recursive" or "semantic".
+            None = use collection config.
 
     Returns:
         {"status": "ok", "filename": str, "chunks": int}
         or {"status": "error", "error": str}
     """
+    config = _resolve_config(collection, chunk_size=chunk_size,
+                             chunk_mode=chunk_mode)
+    chunk_size = config["chunk_size"]
+    chunk_mode = config["chunk_mode"]
+
     if not content or not content.strip():
         return {"status": "error", "error": "Empty content"}
 
@@ -236,17 +262,22 @@ def delete_document(
 
 
 def list_collections() -> list[dict]:
-    """List all collections with document counts.
+    """List all collections with document counts and descriptions.
 
     Returns:
-        [{"name": str, "doc_count": int}, ...]
+        [{"name": str, "doc_count": int, "description": str}, ...]
     """
     store = get_store()
     names = store.list_collections()
     result = []
     for name in names:
         docs = store.list_documents(collection=name)
-        result.append({"name": name, "doc_count": len(docs)})
+        config = store.get_collection_config(name)
+        result.append({
+            "name": name,
+            "doc_count": len(docs),
+            "description": config.get("description", ""),
+        })
     return result
 
 
@@ -264,7 +295,7 @@ def search(
     query: str,
     top_k: int = 5,
     collection: str = "default",
-    rerank: bool = False,
+    rerank: bool | None = None,
     filter: str = "",
 ) -> list[dict]:
     """Search the knowledge base.
@@ -274,6 +305,7 @@ def search(
         top_k: Number of results to return.
         collection: Collection to search.
         rerank: Whether to apply cross-encoder reranking.
+            None = use collection config default.
         filter: Glob pattern to filter by source file path (e.g. "*.md", "**/docs/*").
             Empty string means no filtering.
 
@@ -283,6 +315,11 @@ def search(
         (plus rerank_score if rerank=True)
     """
     from core.reranker import RerankerService
+
+    # Resolve rerank from collection config if not specified
+    if rerank is None:
+        config = _resolve_config(collection)
+        rerank = config.get("rerank", False)
 
     store = get_store()
 
@@ -312,3 +349,43 @@ def search(
         results = results[:top_k]
 
     return results
+
+
+# ── Collection Configuration ─────────────────────────────────
+
+def get_collection_config(collection: str = "default") -> dict:
+    """Get the configuration for a collection.
+
+    Returns:
+        Dict with keys: chunk_mode, chunk_size, chunk_overlap, rerank, description.
+    """
+    store = get_store()
+    return store.get_collection_config(collection)
+
+
+def set_collection_config(
+    collection: str = "default",
+    chunk_mode: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    rerank: bool | None = None,
+    description: str | None = None,
+) -> dict:
+    """Set configuration values for a collection (only non-None values are applied).
+
+    Returns:
+        The full updated config dict.
+    """
+    store = get_store()
+    updates = {}
+    if chunk_mode is not None:
+        updates["chunk_mode"] = chunk_mode
+    if chunk_size is not None:
+        updates["chunk_size"] = chunk_size
+    if chunk_overlap is not None:
+        updates["chunk_overlap"] = chunk_overlap
+    if rerank is not None:
+        updates["rerank"] = rerank
+    if description is not None:
+        updates["description"] = description
+    return store.set_collection_config(collection, updates)

@@ -162,6 +162,27 @@ Remove a document and all its chunks from the knowledge base.
 | `filepath` | string | (required) | Path used during import |
 | `collection` | string | `"default"` | Collection name |
 
+### `configure_collection`
+
+Set default parameters for a knowledge base collection. Future import and search operations will use these defaults when parameters are not explicitly specified.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `collection` | string | `"default"` | Collection name |
+| `chunk_mode` | string | `""` | Default chunking strategy. Empty = keep current. `recursive` or `semantic` |
+| `chunk_size` | int | `0` | Default max characters per chunk. 0 = keep current |
+| `chunk_overlap` | int | `-1` | Default overlap characters. -1 = keep current |
+| `rerank` | bool | `None` | Default whether to use reranker for search. None = keep current |
+| `description` | string | `None` | Collection description. None = keep current |
+
+### `get_collection_config`
+
+View the current configuration for a collection.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `collection` | string | `"default"` | Collection name |
+
 ## REST API
 
 When running in SSE or Streamable HTTP mode, a REST API is automatically available at `/api/` alongside the MCP endpoint. This enables web frontends (e.g., CodingHub) to manage documents via HTTP while AI clients use MCP for search.
@@ -244,6 +265,27 @@ curl -X POST http://localhost:8000/api/collections/default/search \
   {"id": "...", "score": 0.85, "text": "...", "source": "file.md", "chunk_index": 3}
 ]
 ```
+
+### `GET /api/collections/{name}/config`
+
+Get the configuration for a collection.
+
+**Response:**
+```json
+{"chunk_mode": "semantic", "chunk_size": 500, "chunk_overlap": 50, "rerank": false, "description": "Technical docs"}
+```
+
+### `PUT /api/collections/{name}/config`
+
+Update collection configuration. Only include fields you want to change.
+
+```bash
+curl -X PUT http://localhost:8000/api/collections/default/config \
+  -H "Content-Type: application/json" \
+  -d '{"chunk_mode": "semantic", "description": "Technical documentation"}'
+```
+
+**Response:** Returns the full updated configuration.
 
 ### CORS
 

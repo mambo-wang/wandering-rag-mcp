@@ -3,7 +3,7 @@
 A local RAG (Retrieval-Augmented Generation) knowledge base server
 that uses zvec for vector storage and Qwen3-Embedding for text embedding.
 
-Exposes 6 MCP tools for knowledge management and (optionally) a REST API
+Exposes 8 MCP tools for knowledge management and (optionally) a REST API
 for web frontend integration. Both interfaces share the same vector store.
 
 MCP Tools:
@@ -13,6 +13,8 @@ MCP Tools:
   - list_collections: List all knowledge base collections
   - list_documents: List documents in a collection
   - delete_document: Remove a document from the knowledge base
+  - configure_collection: Set default parameters for a collection
+  - get_collection_config: View a collection's configuration
 
 REST API (enabled by default in SSE / streamable-http modes):
   - GET  /api/health
@@ -21,6 +23,8 @@ REST API (enabled by default in SSE / streamable-http modes):
   - POST /api/collections/{name}/documents  (multipart file upload)
   - DELETE /api/collections/{name}/documents
   - POST /api/collections/{name}/search
+  - GET  /api/collections/{name}/config
+  - PUT  /api/collections/{name}/config
 """
 
 import argparse
@@ -107,7 +111,7 @@ def search(
     query: str,
     top_k: int = 5,
     collection: str = "default",
-    rerank: bool = False,
+    rerank: bool | None = None,
     filter: str = "",
 ) -> str:
     """Search the knowledge base for relevant document chunks.
@@ -120,7 +124,8 @@ def search(
         top_k: Number of results to return (default: 5).
         collection: Knowledge base collection to search (default: "default").
         rerank: If True, use a cross-encoder reranker model to improve
-            result relevance. Slightly slower but more accurate (default: False).
+            result relevance. If not specified, uses the collection config
+            default (default: False unless configured otherwise).
         filter: Glob pattern to filter by source file path, e.g. "*.md",
             "**/docs/*", "README*". Leave empty to search all documents (default: "").
     """
@@ -154,9 +159,9 @@ def search(
 def ingest_file(
     filepath: str,
     collection: str = "default",
-    chunk_size: int = 500,
+    chunk_size: int = 0,
     force: bool = False,
-    chunk_mode: str = "recursive",
+    chunk_mode: str = "",
 ) -> str:
     """Import a file into the knowledge base.
 
@@ -167,17 +172,21 @@ def ingest_file(
     Args:
         filepath: Absolute or relative path to the file to import.
         collection: Target knowledge base collection (default: "default").
-        chunk_size: Maximum characters per chunk (default: 500).
+        chunk_size: Maximum characters per chunk. 0 = use collection config
+            (default: 500 if not configured).
         force: If True, re-import even if file content hasn't changed
             since last import (default: False).
-        chunk_mode: Chunking strategy (default: "recursive").
+        chunk_mode: Chunking strategy. Empty = use collection config.
             "recursive" splits by paragraphs, sentences, then characters.
-            "semantic" uses the embedding model to detect topic boundaries
-            between sentences, producing more semantically coherent chunks.
+            "semantic" uses the embedding model to detect topic boundaries.
     """
-    result = service.ingest_file(filepath, collection=collection,
-                                  chunk_size=chunk_size, force=force,
-                                  chunk_mode=chunk_mode)
+    result = service.ingest_file(
+        filepath,
+        collection=collection,
+        chunk_size=chunk_size if chunk_size > 0 else None,
+        force=force,
+        chunk_mode=chunk_mode if chunk_mode else None,
+    )
     if result["status"] == "skipped":
         return (
             f"Skipped '{result['filepath']}': file unchanged since last import. "
@@ -197,9 +206,9 @@ def ingest_directory(
     collection: str = "default",
     recursive: bool = True,
     extensions: str = "",
-    chunk_size: int = 500,
+    chunk_size: int = 0,
     force: bool = False,
-    chunk_mode: str = "recursive",
+    chunk_mode: str = "",
 ) -> str:
     """Batch import all files in a directory into the knowledge base.
 
@@ -212,13 +221,13 @@ def ingest_directory(
         recursive: Whether to scan subdirectories (default: True).
         extensions: Comma-separated file extensions to include, e.g. ".md,.txt,.pdf".
             Leave empty to use the default set (text files + pdf/docx/pptx/xlsx).
-        chunk_size: Maximum characters per chunk (default: 500).
+        chunk_size: Maximum characters per chunk. 0 = use collection config
+            (default: 500 if not configured).
         force: If True, re-import files even if they haven't changed
             since last import (default: False).
-        chunk_mode: Chunking strategy (default: "recursive").
+        chunk_mode: Chunking strategy. Empty = use collection config.
             "recursive" splits by paragraphs, sentences, then characters.
-            "semantic" uses the embedding model to detect topic boundaries
-            between sentences, producing more semantically coherent chunks.
+            "semantic" uses the embedding model to detect topic boundaries.
     """
     dirpath = os.path.abspath(dirpath)
 
@@ -258,9 +267,12 @@ def ingest_directory(
     total_chunks = 0
 
     for fpath in files:
-        result = service.ingest_file(fpath, collection=collection,
-                                      chunk_size=chunk_size, force=force,
-                                      chunk_mode=chunk_mode)
+        result = service.ingest_file(
+            fpath, collection=collection,
+            chunk_size=chunk_size if chunk_size > 0 else None,
+            force=force,
+            chunk_mode=chunk_mode if chunk_mode else None,
+        )
         if result["status"] == "ok":
             total_chunks += result["chunks"]
             success += 1
@@ -290,7 +302,11 @@ def list_collections() -> str:
 
     lines = [f"Found {len(collections)} collection(s):\n"]
     for c in collections:
-        lines.append(f"  - {c['name']} ({c['doc_count']} documents)")
+        desc = c.get("description", "")
+        if desc:
+            lines.append(f"  - {c['name']} ({c['doc_count']} documents) — {desc}")
+        else:
+            lines.append(f"  - {c['name']} ({c['doc_count']} documents)")
 
     return "\n".join(lines)
 
@@ -337,6 +353,67 @@ def delete_document(
         )
     else:
         return f"No chunks found for '{filepath}' in collection '{collection}'."
+
+
+@mcp.tool()
+def configure_collection(
+    collection: str = "default",
+    chunk_mode: str = "",
+    chunk_size: int = 0,
+    chunk_overlap: int = -1,
+    rerank: bool | None = None,
+    description: str | None = None,
+) -> str:
+    """Configure default parameters for a knowledge base collection.
+
+    These defaults are used when importing or searching without explicitly
+    specifying parameters. For example, setting chunk_mode="semantic" here
+    means all future ingest_file calls will use semantic chunking by default.
+
+    Args:
+        collection: Collection name (default: "default").
+        chunk_mode: Default chunking strategy. Empty = keep current.
+            "recursive" or "semantic".
+        chunk_size: Default max characters per chunk. 0 = keep current.
+        chunk_overlap: Default overlap characters. -1 = keep current.
+        rerank: Default whether to use reranker for search.
+            None = keep current, True/False to set.
+        description: Description of this collection. None = keep current.
+    """
+    config = service.set_collection_config(
+        collection=collection,
+        chunk_mode=chunk_mode if chunk_mode else None,
+        chunk_size=chunk_size if chunk_size > 0 else None,
+        chunk_overlap=chunk_overlap if chunk_overlap >= 0 else None,
+        rerank=rerank,
+        description=description,
+    )
+    parts = [f"Collection '{collection}' configured:"]
+    parts.append(f"  chunk_mode:    {config['chunk_mode']}")
+    parts.append(f"  chunk_size:    {config['chunk_size']}")
+    parts.append(f"  chunk_overlap: {config['chunk_overlap']}")
+    parts.append(f"  rerank:        {config['rerank']}")
+    if config.get("description"):
+        parts.append(f"  description:   {config['description']}")
+    return "\n".join(parts)
+
+
+@mcp.tool()
+def get_collection_config(collection: str = "default") -> str:
+    """View the current configuration for a knowledge base collection.
+
+    Args:
+        collection: Collection name (default: "default").
+    """
+    config = service.get_collection_config(collection)
+    parts = [f"Configuration for collection '{collection}':"]
+    parts.append(f"  chunk_mode:    {config['chunk_mode']}")
+    parts.append(f"  chunk_size:    {config['chunk_size']}")
+    parts.append(f"  chunk_overlap: {config['chunk_overlap']}")
+    parts.append(f"  rerank:        {config['rerank']}")
+    if config.get("description"):
+        parts.append(f"  description:   {config['description']}")
+    return "\n".join(parts)
 
 
 # ── Combined ASGI Application ────────────────────────────────────────────────

@@ -70,8 +70,10 @@ async def upload_document(request: Request):
       chunk_mode (str, default "recursive") - "recursive" or "semantic".
     """
     collection = _get_collection(request)
-    chunk_size = int(request.query_params.get("chunk_size", "500"))
-    chunk_mode = request.query_params.get("chunk_mode", "recursive")
+    chunk_size_raw = request.query_params.get("chunk_size")
+    chunk_mode_raw = request.query_params.get("chunk_mode")
+    chunk_size = int(chunk_size_raw) if chunk_size_raw else None
+    chunk_mode = chunk_mode_raw if chunk_mode_raw else None
 
     try:
         form = await request.form()
@@ -152,6 +154,7 @@ async def search_documents(request: Request):
     """POST /api/collections/{name}/search — semantic search.
 
     Expects JSON body: {"query": "...", "top_k": 5, "rerank": false, "filter": "*.md"}
+    Fields not included in the body use the collection config default.
     """
     collection = _get_collection(request)
 
@@ -165,7 +168,8 @@ async def search_documents(request: Request):
         return _error("Missing 'query' in request body", 400)
 
     top_k = int(body.get("top_k", 5))
-    rerank = bool(body.get("rerank", False))
+    rerank_val = body.get("rerank")
+    rerank = bool(rerank_val) if rerank_val is not None else None
     filter_pattern = body.get("filter", "")
 
     try:
@@ -180,6 +184,49 @@ async def search_documents(request: Request):
         return _error(str(e), 500)
 
 
+# ── Collection Config Endpoints ──────────────────────────────
+
+async def get_config(request: Request):
+    """GET /api/collections/{name}/config — get collection configuration."""
+    collection = _get_collection(request)
+    try:
+        config = service.get_collection_config(collection)
+        return _json(config)
+    except Exception as e:
+        logger.error(f"get_config failed: {e}")
+        return _error(str(e), 500)
+
+
+async def update_config(request: Request):
+    """PUT /api/collections/{name}/config — update collection configuration.
+
+    Expects JSON body with optional fields:
+    {"chunk_mode": "semantic", "chunk_size": 500, "chunk_overlap": 50,
+     "rerank": true, "description": "My knowledge base"}
+    Only included fields are updated; omitted fields keep their current value.
+    """
+    collection = _get_collection(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _error("Invalid JSON body", 400)
+
+    try:
+        config = service.set_collection_config(
+            collection=collection,
+            chunk_mode=body.get("chunk_mode"),
+            chunk_size=body.get("chunk_size"),
+            chunk_overlap=body.get("chunk_overlap"),
+            rerank=body.get("rerank"),
+            description=body.get("description"),
+        )
+        return _json(config)
+    except Exception as e:
+        logger.error(f"update_config failed: {e}")
+        return _error(str(e), 500)
+
+
 # ── Router ───────────────────────────────────────────────────
 
 def create_api_routes() -> list[Route]:
@@ -191,6 +238,8 @@ def create_api_routes() -> list[Route]:
         Route("/api/collections/{name}/documents", upload_document, methods=["POST"]),
         Route("/api/collections/{name}/documents", delete_document, methods=["DELETE"]),
         Route("/api/collections/{name}/search", search_documents, methods=["POST"]),
+        Route("/api/collections/{name}/config", get_config, methods=["GET"]),
+        Route("/api/collections/{name}/config", update_config, methods=["PUT"]),
     ]
 
 
@@ -202,7 +251,7 @@ def get_cors_middleware() -> Middleware:
     return Middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
         allow_credentials=True,
     )
