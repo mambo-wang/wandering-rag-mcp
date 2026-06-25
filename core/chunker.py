@@ -341,3 +341,198 @@ def _group_by_breakpoints(
         groups.append(current_group)
 
     return groups
+
+
+# ── Structural Chunking ──────────────────────────────────────
+
+
+def structural_chunk_text(
+    text: str,
+    filepath: str = "",
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+) -> list[Chunk]:
+    """Split text into chunks that respect document structure.
+
+    Recognises Markdown headings, fenced code blocks, and tables as
+    structural boundaries.  Each resulting chunk is prefixed with its
+    enclosing heading (if any) so the LLM retains section context.
+
+    Within a single structural section that exceeds *chunk_size*, the
+    content is further split by the existing recursive character splitter.
+
+    Args:
+        text: The full document text.
+        filepath: Source file path (used for doc_id).
+        chunk_size: Max characters per chunk.
+        chunk_overlap: Overlap size (passed to recursive split for
+            oversized sections).
+
+    Returns:
+        List of Chunk objects.
+    """
+    if not text.strip():
+        return []
+
+    doc_id = compute_doc_id(filepath)
+    blocks = _parse_structural_blocks(text)
+
+    if not blocks:
+        return []
+
+    # Merge small blocks and split large ones
+    raw_chunks = _merge_and_split_blocks(blocks, chunk_size, chunk_overlap)
+
+    chunks = []
+    for i, segment in enumerate(raw_chunks):
+        segment = segment.strip()
+        if segment:
+            chunks.append(Chunk(
+                text=segment,
+                source=filepath,
+                chunk_index=i,
+                doc_id=doc_id,
+            ))
+    return chunks
+
+
+def _parse_structural_blocks(text: str) -> list[dict]:
+    """Parse text into structural blocks based on document structure.
+
+    Returns a list of dicts with keys:
+        heading: str — the most recent Markdown heading (may be empty)
+        body: str — the text content of this block
+        kind: str — "heading", "code", "table", or "text"
+    """
+    import re
+
+    lines = text.split("\n")
+    blocks: list[dict] = []
+    current_heading = ""
+    current_lines: list[str] = []
+    in_code_fence = False
+    in_table = False
+
+    def _flush():
+        """Flush accumulated lines as a text block."""
+        nonlocal current_lines
+        body = "\n".join(current_lines).strip()
+        if body:
+            blocks.append({"heading": current_heading, "body": body, "kind": "text"})
+        current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── Fenced code block (``` or ~~~) ──
+        if re.match(r'^(`{3,}|~{3,})', stripped):
+            if in_code_fence:
+                # Closing fence — flush the code block
+                current_lines.append(line)
+                _flush()
+                in_code_fence = False
+                continue
+            else:
+                # Opening fence — flush any preceding text first
+                _flush()
+                in_code_fence = True
+                current_lines = [line]
+                continue
+
+        if in_code_fence:
+            current_lines.append(line)
+            continue
+
+        # ── Markdown heading ──
+        heading_match = re.match(r'^(#{1,6})\s+(.+)', stripped)
+        if heading_match:
+            _flush()
+            current_heading = stripped
+            # Store the heading line itself as a tiny block so it's not lost
+            blocks.append({"heading": current_heading, "body": current_heading, "kind": "heading"})
+            continue
+
+        # ── Table row (lines starting with |) ──
+        is_table_row = stripped.startswith("|") and stripped.endswith("|")
+        if is_table_row:
+            if not in_table:
+                # Entering a table — flush preceding text
+                _flush()
+                in_table = True
+            current_lines.append(line)
+            continue
+        elif in_table:
+            # Leaving the table
+            _flush()
+            in_table = False
+
+        # ── Plain text ──
+        current_lines.append(line)
+
+    # Flush remaining content
+    if in_code_fence or in_table:
+        _flush()
+    else:
+        _flush()
+
+    return blocks
+
+
+def _merge_and_split_blocks(
+    blocks: list[dict],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    """Merge small structural blocks and split oversized ones.
+
+    Each chunk retains its heading prefix for context.
+    """
+    result: list[str] = []
+    buf_parts: list[str] = []
+    buf_heading = ""
+    buf_len = 0
+
+    def _prefix(heading: str, body: str) -> str:
+        """Prepend heading to body text if heading exists and differs."""
+        if heading and not body.startswith(heading):
+            return f"{heading}\n\n{body}"
+        return body
+
+    for block in blocks:
+        heading = block["heading"]
+        body = block["body"]
+        prefixed = _prefix(heading, body)
+        block_len = len(prefixed)
+
+        # Oversized block: flush buffer first, then split
+        if block_len > chunk_size:
+            if buf_parts:
+                result.append("\n\n".join(buf_parts))
+                buf_parts = []
+                buf_len = 0
+
+            # Split the body (without prefix) then prepend heading to each
+            sub_segments = _recursive_split(body, chunk_size, chunk_overlap)
+            for seg in sub_segments:
+                seg = seg.strip()
+                if seg:
+                    result.append(_prefix(heading, seg))
+            continue
+
+        # Check if merging would exceed chunk_size
+        new_len = buf_len + block_len + (2 if buf_parts else 0)  # \n\n join
+        heading_changed = buf_parts and heading != buf_heading
+
+        if heading_changed or (new_len > chunk_size and buf_parts):
+            result.append("\n\n".join(buf_parts))
+            buf_parts = []
+            buf_len = 0
+
+        buf_parts.append(prefixed)
+        buf_len += block_len + (2 if buf_len > 0 else 0)
+        buf_heading = heading
+
+    if buf_parts:
+        result.append("\n\n".join(buf_parts))
+
+    return result

@@ -430,3 +430,28 @@ class VectorStore:
 
         logger.info(f"Saved config for collection '{name}'")
         return current
+
+    def delete_collection(self, name: str) -> dict:
+        """Delete an entire collection and all its data.
+
+        Removes the zvec data directory, document registry, collection
+        config, and any other files under the collection path. Also
+        evicts the collection from the in-memory cache.
+
+        Args:
+            name: Collection name to delete.
+
+        Returns:
+            {"deleted": bool, "path": str}
+        """
+        coll_path = self._collection_path(name)
+
+        # Evict from in-memory cache
+        self._collections.pop(name, None)
+
+        if not os.path.isdir(coll_path):
+            return {"deleted": False, "path": coll_path}
+
+        shutil.rmtree(coll_path)
+        logger.info(f"Deleted collection '{name}' at {coll_path}")
+        return {"deleted": True, "path": coll_path}

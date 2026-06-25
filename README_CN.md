@@ -122,7 +122,7 @@ python server.py --mode sse --no-api
 | `collection` | string | `"default"` | 目标知识库 |
 | `chunk_size` | int | 500 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
-| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`（按字符递归拆分）或 `semantic`（基于语义相似度拆分） |
+| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`（按字符递归拆分）、`semantic`（基于语义相似度拆分）或 `structural`（按文档结构拆分：标题、代码块、表格） |
 
 > **变更检测**：默认情况下，自上次导入以来未变更的文件会被跳过。使用 `force=true` 强制重新导入。
 
@@ -140,7 +140,7 @@ python server.py --mode sse --no-api
 | `extensions` | string | `""` | 逗号分隔的扩展名过滤（空=全部支持格式） |
 | `chunk_size` | int | 500 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
-| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive` 或 `semantic` |
+| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`、`semantic` 或 `structural` |
 
 ### `list_collections` — 列出知识库
 
@@ -163,6 +163,14 @@ python server.py --mode sse --no-api
 | `filepath` | string | （必填） | 导入时使用的文件路径 |
 | `collection` | string | `"default"` | 知识库名称 |
 
+### `delete_collection` — 删除知识库
+
+删除整个知识库及其所有文档、向量和配置。**此操作不可撤销。**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `collection` | string | `"default"` | 要删除的知识库名称 |
+
 ### `configure_collection` — 配置知识库
 
 设置知识库的默认参数。后续导入和搜索操作如果不显式指定参数，将自动使用这些配置。
@@ -170,7 +178,7 @@ python server.py --mode sse --no-api
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `collection` | string | `"default"` | 知识库名称 |
-| `chunk_mode` | string | `""` | 默认分块策略，空=保持不变。`recursive` 或 `semantic` |
+| `chunk_mode` | string | `""` | 默认分块策略，空=保持不变。`recursive`、`semantic` 或 `structural` |
 | `chunk_size` | int | `0` | 默认每块最大字符数，0=保持不变 |
 | `chunk_overlap` | int | `-1` | 默认重叠字符数，-1=保持不变 |
 | `rerank` | bool | `None` | 搜索时是否默认启用 Reranker，None=保持不变 |
@@ -220,7 +228,7 @@ python server.py --mode sse --no-api
 curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
 ```
 
-可选查询参数：`chunk_size`（默认：500）、`chunk_mode`（`recursive` 或 `semantic`，默认：`recursive`）。
+可选查询参数：`chunk_size`（默认：500）、`chunk_mode`（`recursive`、`semantic` 或 `structural`，默认：`recursive`）。
 
 **响应：**
 ```json
@@ -240,6 +248,19 @@ curl -X DELETE http://localhost:8000/api/collections/default/documents \
 **响应：**
 ```json
 {"status": "ok", "filepath": "/path/to/file.md", "deleted": 12}
+```
+
+### `DELETE /api/collections/{name}`
+
+删除整个知识库及其所有数据。
+
+```bash
+curl -X DELETE http://localhost:8000/api/collections/my_collection
+```
+
+**响应：**
+```json
+{"status": "ok", "collection": "my_collection", "deleted": true}
 ```
 
 ### `POST /api/collections/{name}/search`
@@ -403,11 +424,9 @@ cd bundle && bash install.sh
 
 - **混合搜索**：将 BM25 关键词检索与语义搜索结合，使用倒数排名融合（RRF），提升精确匹配场景（函数名、错误码、技术术语）的召回率
 - **SQLite 元数据层**：用 SQLite 替代 `_registry.json` 存储文档元数据，支持服务端元数据过滤（WHERE 子句）和可靠的批量删除，取代当前的 ID 逐个探测方式
-- **结构化分块**：新增分块模式，先按文档结构（Markdown 标题、代码块围栏、表格边界）切分，再在每段内做递归或语义分块
 - **评测框架**：内置 recall@k 和 MRR 评测，提供 CLI 评测脚本，在调整分块策略或更换模型时量化检索质量
 - **Token 级分块尺寸**：将基于字符的 `chunk_size` 改为基于 token 的尺寸控制，确保不同语言（中日韩 vs. 拉丁字母）下 chunk 长度一致
 - **嵌入批处理控制**：`encode()` 支持可配置的批处理大小，防止大文档（数百个 chunk）一次性编码导致内存溢出
-- **Collection 删除**：支持一次性删除整个知识库及其所有文档
 - **并发访问安全**：为 `_registry.json` 增加文件锁，VectorStore 操作增加线程安全保护，防止 REST API 并发请求导致数据损坏
 
 ## 许可证

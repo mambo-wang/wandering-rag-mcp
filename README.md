@@ -122,7 +122,7 @@ Import a single file into the knowledge base.
 | `collection` | string | `"default"` | Target collection |
 | `chunk_size` | int | 500 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if file hasn't changed |
-| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` (character-based splitting) or `semantic` (embedding similarity-based splitting) |
+| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` (character-based splitting), `semantic` (embedding similarity-based splitting), or `structural` (document structure-aware splitting by headings, code blocks, tables) |
 
 > **Change detection**: By default, files that haven't changed since last import are skipped. Use `force=true` to re-import anyway.
 
@@ -140,7 +140,7 @@ Batch import all files in a directory.
 | `extensions` | string | `""` | Comma-separated extensions filter (empty = all supported) |
 | `chunk_size` | int | 500 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if files haven't changed |
-| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` or `semantic` |
+| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
 
 ### `list_collections`
 
@@ -163,6 +163,14 @@ Remove a document and all its chunks from the knowledge base.
 | `filepath` | string | (required) | Path used during import |
 | `collection` | string | `"default"` | Collection name |
 
+### `delete_collection`
+
+Delete an entire knowledge base collection and all its documents, vectors, and configuration. **This cannot be undone.**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `collection` | string | `"default"` | Collection name to delete |
+
 ### `configure_collection`
 
 Set default parameters for a knowledge base collection. Future import and search operations will use these defaults when parameters are not explicitly specified.
@@ -170,7 +178,7 @@ Set default parameters for a knowledge base collection. Future import and search
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `collection` | string | `"default"` | Collection name |
-| `chunk_mode` | string | `""` | Default chunking strategy. Empty = keep current. `recursive` or `semantic` |
+| `chunk_mode` | string | `""` | Default chunking strategy. Empty = keep current. `recursive`, `semantic`, or `structural` |
 | `chunk_size` | int | `0` | Default max characters per chunk. 0 = keep current |
 | `chunk_overlap` | int | `-1` | Default overlap characters. -1 = keep current |
 | `rerank` | bool | `None` | Default whether to use reranker for search. None = keep current |
@@ -220,7 +228,7 @@ Upload a file to the knowledge base. Accepts `multipart/form-data` with a `file`
 curl -F "file=@document.pdf" http://localhost:8000/api/collections/default/documents
 ```
 
-Optional query parameters: `chunk_size` (default: 500), `chunk_mode` (`recursive` or `semantic`, default: `recursive`).
+Optional query parameters: `chunk_size` (default: 500), `chunk_mode` (`recursive`, `semantic`, or `structural`, default: `recursive`).
 
 **Response:**
 ```json
@@ -240,6 +248,19 @@ curl -X DELETE http://localhost:8000/api/collections/default/documents \
 **Response:**
 ```json
 {"status": "ok", "filepath": "/path/to/file.md", "deleted": 12}
+```
+
+### `DELETE /api/collections/{name}`
+
+Delete an entire collection and all its data.
+
+```bash
+curl -X DELETE http://localhost:8000/api/collections/my_collection
+```
+
+**Response:**
+```json
+{"status": "ok", "collection": "my_collection", "deleted": true}
 ```
 
 ### `POST /api/collections/{name}/search`
@@ -403,11 +424,9 @@ The following improvements are planned for future releases:
 
 - **Hybrid search**: Combine BM25 keyword retrieval with semantic search using Reciprocal Rank Fusion (RRF) for better precision on exact-match queries (function names, error codes, technical terms)
 - **SQLite metadata layer**: Replace `_registry.json` with SQLite for document metadata, enabling server-side metadata filtering (WHERE clauses) and reliable batch deletion instead of the current ID-probing approach
-- **Structured chunking**: A new chunking mode that respects document structure — Markdown headings, code block fences, table boundaries — before applying recursive or semantic splitting within each section
 - **Evaluation framework**: Built-in recall@k and MRR benchmarks with a CLI evaluation script, enabling quantitative measurement of retrieval quality when tuning chunking strategies or swapping models
 - **Token-based chunk sizing**: Replace character-based `chunk_size` with token-based sizing for consistent chunk lengths across different languages (CJK vs. Latin scripts)
 - **Embedding batch control**: Configurable batch size for `encode()` to prevent memory spikes when ingesting large documents with hundreds of chunks
-- **Collection deletion**: Support deleting an entire collection and all its documents in one operation
 - **Concurrent access safety**: File-level locking for `_registry.json` and thread-safe VectorStore operations to prevent corruption under concurrent REST API requests
 
 ## License

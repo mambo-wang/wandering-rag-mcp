@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 
-from core.chunker import chunk_text, semantic_chunk_text
+from core.chunker import chunk_text, semantic_chunk_text, structural_chunk_text
 from core.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,9 @@ def ingest_file(
     if chunk_mode == "semantic":
         chunks = semantic_chunk_text(content, filepath=filepath,
                                      chunk_size=chunk_size)
+    elif chunk_mode == "structural":
+        chunks = structural_chunk_text(content, filepath=filepath,
+                                       chunk_size=chunk_size)
     else:
         chunks = chunk_text(content, filepath=filepath, chunk_size=chunk_size)
     if not chunks:
@@ -235,6 +238,9 @@ def ingest_content(
     if chunk_mode == "semantic":
         chunks = semantic_chunk_text(content, filepath=virtual_path,
                                      chunk_size=chunk_size)
+    elif chunk_mode == "structural":
+        chunks = structural_chunk_text(content, filepath=virtual_path,
+                                       chunk_size=chunk_size)
     else:
         chunks = chunk_text(content, filepath=virtual_path, chunk_size=chunk_size)
     if not chunks:
@@ -259,6 +265,23 @@ def delete_document(
     deleted = store.delete_document(filepath, collection=collection)
     store.unregister_document(filepath, collection=collection)
     return {"status": "ok", "filepath": filepath, "deleted": deleted}
+
+
+def delete_collection(collection: str) -> dict:
+    """Delete an entire collection and all its documents.
+
+    Returns:
+        {"status": "ok", "collection": str, "deleted": True}
+        or {"status": "error", "error": str}
+    """
+    if not collection or not collection.strip():
+        return {"status": "error", "error": "Collection name is required"}
+
+    store = get_store()
+    result = store.delete_collection(collection)
+    if result["deleted"]:
+        return {"status": "ok", "collection": collection, "deleted": True}
+    return {"status": "error", "error": f"Collection not found: {collection}"}
 
 
 def list_collections() -> list[dict]:

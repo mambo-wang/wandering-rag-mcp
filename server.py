@@ -3,7 +3,7 @@
 A local RAG (Retrieval-Augmented Generation) knowledge base server
 that uses zvec for vector storage and Qwen3-Embedding for text embedding.
 
-Exposes 8 MCP tools for knowledge management and (optionally) a REST API
+Exposes 9 MCP tools for knowledge management and (optionally) a REST API
 for web frontend integration. Both interfaces share the same vector store.
 
 MCP Tools:
@@ -13,6 +13,7 @@ MCP Tools:
   - list_collections: List all knowledge base collections
   - list_documents: List documents in a collection
   - delete_document: Remove a document from the knowledge base
+  - delete_collection: Remove an entire collection and all its data
   - configure_collection: Set default parameters for a collection
   - get_collection_config: View a collection's configuration
 
@@ -22,6 +23,7 @@ REST API (enabled by default in SSE / streamable-http modes):
   - GET  /api/collections/{name}/documents
   - POST /api/collections/{name}/documents  (multipart file upload)
   - DELETE /api/collections/{name}/documents
+  - DELETE /api/collections/{name}
   - POST /api/collections/{name}/search
   - GET  /api/collections/{name}/config
   - PUT  /api/collections/{name}/config
@@ -185,6 +187,8 @@ def ingest_file(
         chunk_mode: Chunking strategy. Empty = use collection config.
             "recursive" splits by paragraphs, sentences, then characters.
             "semantic" uses the embedding model to detect topic boundaries.
+            "structural" respects document structure (Markdown headings,
+            code blocks, tables) as chunk boundaries.
     """
     result = service.ingest_file(
         filepath,
@@ -234,6 +238,8 @@ def ingest_directory(
         chunk_mode: Chunking strategy. Empty = use collection config.
             "recursive" splits by paragraphs, sentences, then characters.
             "semantic" uses the embedding model to detect topic boundaries.
+            "structural" respects document structure (Markdown headings,
+            code blocks, tables) as chunk boundaries.
     """
     dirpath = os.path.abspath(dirpath)
 
@@ -362,6 +368,29 @@ def delete_document(
 
 
 @mcp.tool()
+def delete_collection(
+    collection: str = "default",
+) -> str:
+    """Delete an entire knowledge base collection and all its documents.
+
+    WARNING: This permanently removes the collection including all
+    indexed documents, vectors, and configuration. This cannot be undone.
+
+    Args:
+        collection: Name of the collection to delete (default: "default").
+    """
+    result = service.delete_collection(collection)
+
+    if result.get("status") == "ok":
+        return (
+            f"Collection '{collection}' has been deleted along with "
+            f"all its documents and vectors."
+        )
+    else:
+        return f"Error: {result.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
 def configure_collection(
     collection: str = "default",
     chunk_mode: str = "",
@@ -379,7 +408,7 @@ def configure_collection(
     Args:
         collection: Collection name (default: "default").
         chunk_mode: Default chunking strategy. Empty = keep current.
-            "recursive" or "semantic".
+            "recursive", "semantic", or "structural".
         chunk_size: Default max characters per chunk. 0 = keep current.
         chunk_overlap: Default overlap characters. -1 = keep current.
         rerank: Default whether to use reranker for search.

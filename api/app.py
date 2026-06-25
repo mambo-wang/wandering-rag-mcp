@@ -150,6 +150,24 @@ async def delete_document(request: Request):
         return _error(str(e), 500)
 
 
+async def delete_collection(request: Request):
+    """DELETE /api/collections/{name} — delete an entire collection.
+
+    Permanently removes the collection including all documents,
+    vectors, and configuration.
+    """
+    collection = _get_collection(request)
+
+    try:
+        result = service.delete_collection(collection)
+        if result.get("status") == "error":
+            return _error(result["error"], 404)
+        return _json(result)
+    except Exception as e:
+        logger.error(f"delete_collection failed: {e}")
+        return _error(str(e), 500)
+
+
 async def search_documents(request: Request):
     """POST /api/collections/{name}/search — semantic search.
 
@@ -240,6 +258,7 @@ def create_api_routes() -> list[Route]:
         Route("/api/collections/{name}/documents", list_documents, methods=["GET"]),
         Route("/api/collections/{name}/documents", upload_document, methods=["POST"]),
         Route("/api/collections/{name}/documents", delete_document, methods=["DELETE"]),
+        Route("/api/collections/{name}", delete_collection, methods=["DELETE"]),
         Route("/api/collections/{name}/search", search_documents, methods=["POST"]),
         Route("/api/collections/{name}/config", get_config, methods=["GET"]),
         Route("/api/collections/{name}/config", update_config, methods=["PUT"]),
