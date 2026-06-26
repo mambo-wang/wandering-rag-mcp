@@ -110,7 +110,7 @@ Search the knowledge base with natural language queries.
 | `query` | string | (required) | Natural language search query |
 | `top_k` | int | 5 | Number of results to return |
 | `collection` | string | `"default"` | Collection to search |
-| `rerank` | bool | `false` | Use cross-encoder reranker for higher accuracy |
+| `rerank` | bool | `true` | Use cross-encoder reranker for higher accuracy |
 | `filter` | string | `""` | Glob pattern to filter by source file (e.g. `*.md`, `**/docs/*`) |
 | `expand_context` | int | 0 | Number of neighboring chunks to include before/after each result for broader context |
 
@@ -122,9 +122,9 @@ Import a single file into the knowledge base.
 |---|---|---|---|
 | `filepath` | string | (required) | Path to the file |
 | `collection` | string | `"default"` | Target collection |
-| `chunk_size` | int | 500 | Max characters per chunk |
+| `chunk_size` | int | 800 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if file hasn't changed |
-| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive` (character-based splitting), `semantic` (embedding similarity-based splitting), or `structural` (document structure-aware splitting by headings, code blocks, tables) |
+| `chunk_mode` | string | `"structural"` | Chunking strategy: `recursive` (character-based splitting), `semantic` (embedding similarity-based splitting), or `structural` (document structure-aware splitting by headings, code blocks, tables) |
 
 > **Change detection**: By default, files that haven't changed since last import are skipped. Use `force=true` to re-import anyway.
 
@@ -140,9 +140,9 @@ Batch import all files in a directory.
 | `collection` | string | `"default"` | Target collection |
 | `recursive` | bool | `true` | Scan subdirectories |
 | `extensions` | string | `""` | Comma-separated extensions filter (empty = all supported) |
-| `chunk_size` | int | 500 | Max characters per chunk |
+| `chunk_size` | int | 800 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if files haven't changed |
-| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
+| `chunk_mode` | string | `"structural"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
 
 ### `ingest_url`
 
@@ -152,9 +152,9 @@ Download a file from a URL and import it into the knowledge base. Useful when th
 |---|---|---|---|
 | `url` | string | (required) | HTTP or HTTPS URL of the file |
 | `collection` | string | `"default"` | Target collection |
-| `chunk_size` | int | 500 | Max characters per chunk |
+| `chunk_size` | int | 800 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if file hasn't changed |
-| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
+| `chunk_mode` | string | `"structural"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
 
 ### `upload_info`
 

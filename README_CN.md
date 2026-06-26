@@ -110,7 +110,7 @@ python server.py --mode sse --no-api
 | `query` | string | （必填） | 自然语言搜索查询 |
 | `top_k` | int | 5 | 返回结果数量 |
 | `collection` | string | `"default"` | 搜索的知识库 |
-| `rerank` | bool | `false` | 启用交叉编码器 Reranker 提升精度 |
+| `rerank` | bool | `true` | 启用交叉编码器 Reranker 提升精度 |
 | `filter` | string | `""` | Glob 模式按源文件过滤（如 `*.md`、`**/docs/*`） |
 | `expand_context` | int | 0 | 每条结果前后扩展的相邻 chunk 数量，提供更完整的上下文 |
 
@@ -122,9 +122,9 @@ python server.py --mode sse --no-api
 |---|---|---|---|
 | `filepath` | string | （必填） | 文件路径 |
 | `collection` | string | `"default"` | 目标知识库 |
-| `chunk_size` | int | 500 | 每块最大字符数 |
+| `chunk_size` | int | 800 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
-| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`（按字符递归拆分）、`semantic`（基于语义相似度拆分）或 `structural`（按文档结构拆分：标题、代码块、表格） |
+| `chunk_mode` | string | `"structural"` | 分块策略：`recursive`（按字符递归拆分）、`semantic`（基于语义相似度拆分）或 `structural`（按文档结构拆分：标题、代码块、表格） |
 
 > **变更检测**：默认情况下，自上次导入以来未变更的文件会被跳过。使用 `force=true` 强制重新导入。
 
@@ -140,9 +140,9 @@ python server.py --mode sse --no-api
 | `collection` | string | `"default"` | 目标知识库 |
 | `recursive` | bool | `true` | 是否扫描子目录 |
 | `extensions` | string | `""` | 逗号分隔的扩展名过滤（空=全部支持格式） |
-| `chunk_size` | int | 500 | 每块最大字符数 |
+| `chunk_size` | int | 800 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
-| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`、`semantic` 或 `structural` |
+| `chunk_mode` | string | `"structural"` | 分块策略：`recursive`、`semantic` 或 `structural` |
 
 ### `ingest_url` — 从 URL 导入文件
 
@@ -152,9 +152,9 @@ python server.py --mode sse --no-api
 |---|---|---|---|
 | `url` | string | （必填） | 文件的 HTTP 或 HTTPS URL |
 | `collection` | string | `"default"` | 目标知识库 |
-| `chunk_size` | int | 500 | 每块最大字符数 |
+| `chunk_size` | int | 800 | 每块最大字符数 |
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
-| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`、`semantic` 或 `structural` |
+| `chunk_mode` | string | `"structural"` | 分块策略：`recursive`、`semantic` 或 `structural` |
 
 ### `upload_info` — 获取 HTTP 上传接口信息
 

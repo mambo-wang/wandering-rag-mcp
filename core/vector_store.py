@@ -22,10 +22,10 @@ DEFAULT_DATA_DIR = os.getenv(
 
 # Default configuration for each collection (stored per-collection in _config.json)
 DEFAULT_COLLECTION_CONFIG = {
-    "chunk_mode": "recursive",
-    "chunk_size": 500,
+    "chunk_mode": "structural",
+    "chunk_size": 800,
     "chunk_overlap": 50,
-    "rerank": False,
+    "rerank": True,
     "description": "",
 }
 
