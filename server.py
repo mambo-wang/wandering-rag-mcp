@@ -3,13 +3,15 @@
 A local RAG (Retrieval-Augmented Generation) knowledge base server
 that uses zvec for vector storage and Qwen3-Embedding for text embedding.
 
-Exposes 9 MCP tools for knowledge management and (optionally) a REST API
+Exposes 11 MCP tools for knowledge management and (optionally) a REST API
 for web frontend integration. Both interfaces share the same vector store.
 
 MCP Tools:
   - search: Semantic search across the knowledge base
   - ingest_file: Import a single file
   - ingest_directory: Batch import a directory of files
+  - ingest_url: Download a file from a URL and import it
+  - upload_info: Get the HTTP upload endpoint for client-side file transfer
   - list_collections: List all knowledge base collections
   - list_documents: List documents in a collection
   - delete_document: Remove a document from the knowledge base
@@ -449,6 +451,144 @@ def get_collection_config(collection: str = "default") -> str:
     if config.get("description"):
         parts.append(f"  description:   {config['description']}")
     return "\n".join(parts)
+
+
+@mcp.tool()
+def ingest_url(
+    url: str,
+    collection: str = "default",
+    chunk_size: int = 0,
+    force: bool = False,
+    chunk_mode: str = "",
+) -> str:
+    """Download a file from a URL and import it into the knowledge base.
+
+    Useful when the file is hosted on a web server, file sharing service,
+    or any HTTP/HTTPS accessible location. The file is downloaded to the
+    server's upload directory and then processed (converted to text if
+    binary, chunked, and indexed).
+
+    Args:
+        url: HTTP or HTTPS URL of the file to download and import.
+        collection: Target knowledge base collection (default: "default").
+        chunk_size: Maximum characters per chunk. 0 = use collection config
+            (default: 500 if not configured).
+        force: If True, re-import even if file content hasn't changed
+            since last import (default: False).
+        chunk_mode: Chunking strategy. Empty = use collection config.
+            "recursive" splits by paragraphs, sentences, then characters.
+            "semantic" uses the embedding model to detect topic boundaries.
+            "structural" respects document structure (Markdown headings,
+            code blocks, tables) as chunk boundaries.
+    """
+    from urllib.parse import urlparse, unquote
+
+    if not url.startswith(("http://", "https://")):
+        return "Error: URL must start with http:// or https://"
+
+    # Extract filename from URL
+    parsed = urlparse(url)
+    filename = os.path.basename(unquote(parsed.path))
+    if not filename:
+        filename = "downloaded_file"
+
+    # Download the file
+    try:
+        import httpx
+        logger.info(f"Downloading file from URL: {url}")
+        with httpx.Client(follow_redirects=True, timeout=120) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            content = resp.content
+    except ImportError:
+        import urllib.request
+        logger.info(f"Downloading file from URL (urllib): {url}")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "wandering-rag-mcp"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                content = resp.read()
+        except Exception as e:
+            return f"Error downloading file: {e}"
+    except Exception as e:
+        return f"Error downloading file: {e}"
+
+    if not content:
+        return "Error: Downloaded file is empty."
+
+    # Save to upload directory
+    store = service.get_store()
+    upload_dir = os.path.join(store.data_dir, "_uploads", collection)
+    os.makedirs(upload_dir, exist_ok=True)
+    tmp_path = os.path.join(upload_dir, filename)
+
+    with open(tmp_path, "wb") as f:
+        f.write(content)
+
+    logger.info(f"Downloaded {len(content)} bytes to {tmp_path}")
+
+    # Ingest the downloaded file
+    result = service.ingest_file(
+        tmp_path,
+        collection=collection,
+        chunk_size=chunk_size if chunk_size > 0 else None,
+        force=force,
+        chunk_mode=chunk_mode if chunk_mode else None,
+    )
+
+    if result["status"] == "skipped":
+        return (
+            f"Downloaded '{filename}' ({len(content)} bytes) but skipped import: "
+            f"file unchanged since last import. Use force=True to re-import."
+        )
+    if result["status"] == "error":
+        return f"Downloaded '{filename}' but import failed: {result['error']}"
+    return (
+        f"Downloaded '{filename}' ({len(content)} bytes) from URL and imported "
+        f"into collection '{collection}': {result['chunks']} chunks indexed."
+    )
+
+
+@mcp.tool()
+def upload_info() -> str:
+    """Get information about the HTTP file upload endpoint.
+
+    The MCP protocol does not support binary file transfer directly.
+    To upload files from a local machine to the knowledge base, use the
+    REST API upload endpoint instead. This tool returns the endpoint URL
+    and usage instructions.
+
+    Returns:
+        Upload endpoint URL, supported file types, and example curl command.
+    """
+    host = _args.host if _args.host != "0.0.0.0" else "localhost"
+    base_url = f"http://{host}:{_args.port}"
+
+    return f"""HTTP File Upload Endpoint
+========================
+
+The MCP protocol does not support binary file transfer. To upload files
+from your local machine, use the REST API:
+
+Endpoint: POST {base_url}/api/collections/{{collection}}/documents
+
+Supported file types:
+  - Text files: md, txt, py, js, ts, java, go, etc.
+  - Binary documents: pdf, docx, pptx, xlsx
+
+Query parameters (optional):
+  - chunk_size (int): Max characters per chunk (default: 500)
+  - chunk_mode (str): "recursive", "semantic", or "structural"
+
+Example (curl):
+  curl -X POST "{base_url}/api/collections/default/documents" \\
+    -F "file=@/path/to/document.pdf"
+
+Example (upload to specific collection):
+  curl -X POST "{base_url}/api/collections/my-kb/documents" \\
+    -F "file=@/path/to/document.pdf"
+
+Alternatively, use the ingest_url tool to import a file from a URL,
+or use ingest_file if the file is already on this server."""
 
 
 # ── Combined ASGI Application ────────────────────────────────────────────────

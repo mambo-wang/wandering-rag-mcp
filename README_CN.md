@@ -144,6 +144,24 @@ python server.py --mode sse --no-api
 | `force` | bool | `false` | 即使文件未变更也重新导入 |
 | `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`、`semantic` 或 `structural` |
 
+### `ingest_url` — 从 URL 导入文件
+
+从指定的 HTTP/HTTPS URL 下载文件并导入知识库。适用于文件托管在 Web 服务器或文件分享服务的场景。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `url` | string | （必填） | 文件的 HTTP 或 HTTPS URL |
+| `collection` | string | `"default"` | 目标知识库 |
+| `chunk_size` | int | 500 | 每块最大字符数 |
+| `force` | bool | `false` | 即使文件未变更也重新导入 |
+| `chunk_mode` | string | `"recursive"` | 分块策略：`recursive`、`semantic` 或 `structural` |
+
+### `upload_info` — 获取 HTTP 上传接口信息
+
+返回 REST API 的文件上传端点地址和使用说明。MCP 协议不支持二进制文件传输，通过此工具客户端可感知到 HTTP 上传接口，从而在客户端侧实现文件上传。
+
+无参数。
+
 ### `list_collections` — 列出知识库
 
 列出所有已创建的知识库 Collection。
