@@ -79,6 +79,7 @@ python server.py --mode sse --no-api
 {
   "mcpServers": {
     "wandering-rag-mcp": {
+      "type": "sse",
       "url": "http://your-server:8000/sse"
     }
   }
@@ -91,6 +92,7 @@ python server.py --mode sse --no-api
 {
   "mcpServers": {
     "wandering-rag-mcp": {
+      "type": "streamableHttp",
       "url": "http://your-server:8000/mcp"
     }
   }
