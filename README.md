@@ -79,6 +79,7 @@ Environment variables are also supported:
 {
   "mcpServers": {
     "wandering-rag-mcp": {
+      "type": "sse"
       "url": "http://your-server:8000/sse"
     }
   }
@@ -91,6 +92,7 @@ Environment variables are also supported:
 {
   "mcpServers": {
     "wandering-rag-mcp": {
+      "type": "streamableHttp",
       "url": "http://your-server:8000/mcp"
     }
   }
@@ -141,6 +143,24 @@ Batch import all files in a directory.
 | `chunk_size` | int | 500 | Max characters per chunk |
 | `force` | bool | `false` | Re-import even if files haven't changed |
 | `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
+
+### `ingest_url`
+
+Download a file from a URL and import it into the knowledge base. Useful when the file is hosted on a web server or file sharing service.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | string | (required) | HTTP or HTTPS URL of the file |
+| `collection` | string | `"default"` | Target collection |
+| `chunk_size` | int | 500 | Max characters per chunk |
+| `force` | bool | `false` | Re-import even if file hasn't changed |
+| `chunk_mode` | string | `"recursive"` | Chunking strategy: `recursive`, `semantic`, or `structural` |
+
+### `upload_info`
+
+Returns the HTTP upload endpoint URL and usage instructions. Since MCP protocol does not support binary file transfer, this tool informs the client how to upload files via the REST API.
+
+No parameters.
 
 ### `list_collections`
 
