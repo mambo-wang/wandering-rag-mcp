@@ -1,0 +1,103 @@
+{
+  "interfaces": {
+    "children": {
+      "mcp-server": {
+        "children": {},
+        "components": [
+          "server.py::search",
+          "server.py::ingest_file",
+          "server.py::ingest_directory",
+          "server.py::list_collections",
+          "server.py::list_documents",
+          "server.py::delete_document",
+          "server.py::delete_collection",
+          "server.py::configure_collection",
+          "server.py::get_collection_config",
+          "server.py::_create_combined_app",
+          "server.py::main"
+        ]
+      },
+      "rest-api": {
+        "children": {},
+        "components": [
+          "api\\app.py::_json",
+          "api\\app.py::_error",
+          "api\\app.py::_get_collection",
+          "api\\app.py::health",
+          "api\\app.py::list_collections",
+          "api\\app.py::list_documents",
+          "api\\app.py::upload_document",
+          "api\\app.py::delete_document",
+          "api\\app.py::delete_collection",
+          "api\\app.py::search_documents",
+          "api\\app.py::get_config",
+          "api\\app.py::update_config",
+          "api\\app.py::create_api_routes",
+          "api\\app.py::get_cors_middleware"
+        ]
+      }
+    },
+    "components": []
+  },
+  "rag-core": {
+    "children": {
+      "ai-models": {
+        "children": {},
+        "components": [
+          "core\\embeddings.py::EmbeddingService",
+          "core\\reranker.py::RerankerService"
+        ]
+      },
+      "chunking": {
+        "children": {},
+        "components": [
+          "core\\chunker.py::Chunk",
+          "core\\chunker.py::compute_doc_id",
+          "core\\chunker.py::chunk_text",
+          "core\\chunker.py::_recursive_split",
+          "core\\chunker.py::_merge_segments",
+          "core\\chunker.py::_compute_overlap",
+          "core\\chunker.py::_split_sentences",
+          "core\\chunker.py::_split_by_chars",
+          "core\\chunker.py::semantic_chunk_text",
+          "core\\chunker.py::_extract_sentences",
+          "core\\chunker.py::_dot_product",
+          "core\\chunker.py::_dynamic_threshold",
+          "core\\chunker.py::_group_by_breakpoints",
+          "core\\chunker.py::structural_chunk_text",
+          "core\\chunker.py::_parse_structural_blocks",
+          "core\\chunker.py::_flush",
+          "core\\chunker.py::_merge_and_split_blocks",
+          "core\\chunker.py::_prefix"
+        ]
+      },
+      "service": {
+        "children": {},
+        "components": [
+          "core\\service.py::get_store",
+          "core\\service.py::_get_markitdown",
+          "core\\service.py::read_file_content",
+          "core\\service.py::_compute_file_hash",
+          "core\\service.py::_get_registry_hash",
+          "core\\service.py::_resolve_config",
+          "core\\service.py::ingest_file",
+          "core\\service.py::ingest_content",
+          "core\\service.py::delete_document",
+          "core\\service.py::delete_collection",
+          "core\\service.py::list_collections",
+          "core\\service.py::list_documents",
+          "core\\service.py::search",
+          "core\\service.py::get_collection_config",
+          "core\\service.py::set_collection_config"
+        ]
+      },
+      "vector-store": {
+        "children": {},
+        "components": [
+          "core\\vector_store.py::VectorStore"
+        ]
+      }
+    },
+    "components": []
+  }
+}
