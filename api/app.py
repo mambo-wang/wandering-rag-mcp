@@ -21,6 +21,44 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ──────────────────────────────────────────────────
 
+def _fix_filename_encoding(filename: str) -> str:
+    """Fix mojibake filenames caused by encoding mismatches.
+
+    Common issue: curl on Chinese Windows sends filenames in GBK,
+    but the HTTP multipart parser interprets raw bytes as Latin-1,
+    resulting in garbled names like 'ÊÛÇ°¼¼ÊõÖ¸ÄÏ'.
+    This function tries to detect and fix such cases.
+    """
+    # Quick check: if all chars are ASCII or common CJK, likely fine
+    try:
+        if all(ord(c) < 128 or '\u4e00' <= c <= '\u9fff' or c in '（）()' for c in filename):
+            return filename
+    except Exception:
+        pass
+
+    # Try Latin-1 → GBK (Chinese Windows curl)
+    try:
+        raw_bytes = filename.encode("latin-1")
+        fixed = raw_bytes.decode("gbk")
+        if fixed != filename:
+            logger.info(f"Fixed filename encoding: '{filename}' → '{fixed}'")
+            return fixed
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+
+    # Try Latin-1 → UTF-8 (some clients)
+    try:
+        raw_bytes = filename.encode("latin-1")
+        fixed = raw_bytes.decode("utf-8")
+        if fixed != filename:
+            logger.info(f"Fixed filename encoding (UTF-8): '{filename}' → '{fixed}'")
+            return fixed
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+
+    return filename
+
+
 def _json(data, status_code: int = 200):
     return JSONResponse(content=data, status_code=status_code)
 
@@ -84,7 +122,7 @@ async def upload_document(request: Request):
     if upload is None:
         return _error("Missing 'file' field in multipart form", 400)
 
-    filename = upload.filename or "unnamed"
+    filename = _fix_filename_encoding(upload.filename or "unnamed")
 
     # Read file content
     try:
